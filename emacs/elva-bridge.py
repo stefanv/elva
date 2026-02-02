@@ -1,26 +1,114 @@
 #!/usr/bin/env python3
-"""Bridge between Emacs and Elva using pycrdt."""
+"""
+Bridge between Emacs and Elva using pycrdt.
+
+This bridge subprocess handles the Yjs protocol communication with an Elva server,
+translating between Yjs CRDT operations and simple position-based edits for Emacs.
+"""
 
 import asyncio
 import json
 import sys
 from pycrdt import Doc, Text
-from websockets import connect
+import websockets
+
+
+# Y-Protocol message types (magic bytes)
+SYNC = 0
+SYNC_STEP1 = 0  # (0, 0) - send state vector
+SYNC_STEP2 = 1  # (0, 1) - reply with update
+SYNC_UPDATE = 2  # (0, 2) - incremental update
+AWARENESS = 1  # (1,) - awareness/presence
+
+
+def encode_message(msg_type: tuple[int, ...], payload: bytes) -> bytes:
+    """Encode a Y-protocol message with magic bytes and length-prefixed payload."""
+    # Magic bytes
+    magic = bytes(msg_type)
+    # Variable-length encode the payload length
+    length = len(payload)
+    len_bytes = _encode_var_uint(length)
+    return magic + len_bytes + payload
+
+
+def _encode_var_uint(num: int) -> bytes:
+    """Encode an integer as a variable-length unsigned int."""
+    result = []
+    while num > 127:
+        result.append(128 | (num & 127))
+        num >>= 7
+    result.append(num)
+    return bytes(result)
+
+
+def _decode_var_uint(data: bytes, offset: int = 0) -> tuple[int, int]:
+    """Decode a variable-length unsigned int. Returns (value, bytes_consumed)."""
+    result = 0
+    shift = 0
+    idx = offset
+    while True:
+        byte = data[idx]
+        result |= (byte & 127) << shift
+        idx += 1
+        if byte < 128:
+            break
+        shift += 7
+    return result, idx - offset
+
+
+def decode_message(data: bytes) -> tuple[tuple[int, ...], bytes]:
+    """Decode a Y-protocol message. Returns (msg_type, payload)."""
+    offset = 0
+
+    # Read first magic byte
+    mb1, consumed = _decode_var_uint(data, offset)
+    offset += consumed
+
+    if mb1 == AWARENESS:
+        # Awareness has single magic byte
+        msg_type = (AWARENESS,)
+    else:
+        # Sync messages have two magic bytes
+        mb2, consumed = _decode_var_uint(data, offset)
+        offset += consumed
+        msg_type = (mb1, mb2)
+
+    # Read payload length
+    payload_len, consumed = _decode_var_uint(data, offset)
+    offset += consumed
+
+    # Extract payload
+    payload = data[offset : offset + payload_len]
+    return msg_type, payload
 
 
 class ElvaBridge:
-    def __init__(self, url):
+    """Bridge between Emacs (via stdio) and Elva (via WebSocket)."""
+
+    def __init__(self, url: str):
         self.url = url
         self.doc = Doc()
-        self.text = self.doc.get("text", type=Text)
-        self._applying_remote = False
+        # Use "ytext" to match Elva's editor client
+        self.text = self.doc.get("ytext", type=Text)
+        self._applying_from_server = False  # Block echo to Emacs
+        self._applying_from_emacs = False   # Block echo to Emacs (but send to server)
+        self._ws = None
+        self._send_queue = asyncio.Queue()
 
-    def on_text_change(self, event):
-        """Called when Yjs text changes (from Elva)."""
-        if self._applying_remote:
+    def _send_to_emacs(self, msg: dict):
+        """Send JSON message to Emacs via stdout."""
+        print(json.dumps(msg), flush=True)
+
+    def _log(self, msg: str):
+        """Log to stderr (visible in Emacs process buffer)."""
+        print(f"[bridge] {msg}", file=sys.stderr, flush=True)
+
+    def _on_text_change(self, event):
+        """Called when Yjs text changes. Translate to Emacs operations."""
+        # Don't echo back to Emacs if we're applying changes from Emacs or server
+        if self._applying_from_server or self._applying_from_emacs:
             return
 
-        # Translate Yjs delta to position-based ops for Emacs
         pos = 0
         for delta in event.delta:
             if "retain" in delta:
@@ -33,61 +121,165 @@ class ElvaBridge:
                 count = delta["delete"]
                 self._send_to_emacs({"op": "delete", "pos": pos, "count": count})
 
-    def _send_to_emacs(self, msg):
-        """Send JSON message to Emacs via stdout."""
-        print(json.dumps(msg), flush=True)
-
-    def apply_from_emacs(self, msg):
+    def _apply_from_emacs(self, msg: dict):
         """Apply an edit from Emacs to the Yjs doc."""
-        self._applying_remote = True
+        self._applying_from_emacs = True  # Don't echo back to Emacs
         try:
-            if msg["op"] == "insert":
+            op = msg.get("op")
+            if op == "insert":
                 self.text.insert(msg["pos"], msg["text"])
-            elif msg["op"] == "delete":
+            elif op == "delete":
                 self.text.delete(msg["pos"], msg["count"])
+            elif op == "sync":
+                # Full sync request - clear and set content
+                with self.doc.transaction():
+                    if len(self.text) > 0:
+                        self.text.delete(0, len(self.text))
+                    if msg.get("text"):
+                        self.text.insert(0, msg["text"])
         finally:
-            self._applying_remote = False
+            self._applying_from_emacs = False
 
-    async def run(self):
-        """Main loop: connect to Elva and bridge to Emacs."""
-        self.text.observe(self.on_text_change)
+    async def _send_sync_step1(self):
+        """Send SYNC_STEP1 with our state vector."""
+        state = bytes(self.doc.get_state())
+        msg = encode_message((SYNC, SYNC_STEP1), state)
+        await self._ws.send(msg)
+        self._log("sent sync step 1")
 
-        async with connect(self.url) as ws:
-            # Start tasks for both directions
-            await asyncio.gather(
-                self._read_emacs(ws),
-                self._read_elva(ws),
-            )
+    async def _send_sync_step2(self, their_state: bytes):
+        """Send SYNC_STEP2 with update relative to their state."""
+        update = bytes(self.doc.get_update(their_state))
+        msg = encode_message((SYNC, SYNC_STEP2), update)
+        await self._ws.send(msg)
+        self._log("sent sync step 2")
 
-    async def _read_emacs(self, ws):
-        """Read from stdin (Emacs) and apply to doc."""
+    async def _send_update(self):
+        """Send incremental update to server."""
+        # Get update since last sync (from empty state for now)
+        # In practice, we send the transaction update via observer
+        pass
+
+    async def _on_ws_message(self, data: bytes):
+        """Handle incoming WebSocket message."""
+        try:
+            msg_type, payload = decode_message(data)
+        except Exception as e:
+            self._log(f"failed to decode message: {e}")
+            return
+
+        if msg_type == (SYNC, SYNC_STEP1):
+            # Server is asking for our state
+            await self._send_sync_step2(payload)
+            self._log("received sync step 1, replied with step 2")
+
+        elif msg_type == (SYNC, SYNC_STEP2) or msg_type == (SYNC, SYNC_UPDATE):
+            # Server is sending us updates
+            if payload != b"\x00\x00":  # Not empty update
+                self._applying_from_server = True  # Don't echo to Emacs or send back
+                try:
+                    self.doc.apply_update(payload)
+                    self._log(f"applied update ({len(payload)} bytes)")
+                finally:
+                    self._applying_from_server = False
+
+        elif msg_type == (AWARENESS,):
+            # Awareness update - ignore for now
+            self._log("received awareness update (ignored)")
+
+        else:
+            self._log(f"unknown message type: {msg_type}")
+
+    def _on_doc_update(self, event):
+        """Called when local doc changes - queue update for server."""
+        # Only skip if applying from server (to avoid echo)
+        # We DO want to send when applying from Emacs
+        if self._applying_from_server:
+            return
+        if event.update and event.update != b"\x00\x00":
+            self._send_queue.put_nowait(event.update)
+
+    async def _ws_sender(self):
+        """Send queued updates to WebSocket."""
+        while True:
+            update = await self._send_queue.get()
+            if self._ws:
+                msg = encode_message((SYNC, SYNC_UPDATE), bytes(update))
+                await self._ws.send(msg)
+                self._log(f"sent update ({len(update)} bytes)")
+
+    async def _ws_receiver(self):
+        """Receive messages from WebSocket."""
+        try:
+            async for data in self._ws:
+                await self._on_ws_message(data)
+        except websockets.ConnectionClosed as e:
+            self._log(f"connection closed: {e}")
+
+    async def _stdin_reader(self):
+        """Read JSON messages from Emacs via stdin."""
         loop = asyncio.get_event_loop()
         reader = asyncio.StreamReader()
-        await loop.connect_read_pipe(
-            lambda: asyncio.StreamReaderProtocol(reader), sys.stdin
-        )
+        protocol = asyncio.StreamReaderProtocol(reader)
+        await loop.connect_read_pipe(lambda: protocol, sys.stdin)
 
         while True:
             line = await reader.readline()
             if not line:
+                self._log("stdin closed")
                 break
-            msg = json.loads(line)
-            self.apply_from_emacs(msg)
-            # Send update to Elva
-            update = self.doc.get_update()
-            await ws.send(update)
-
-    async def _read_elva(self, ws):
-        """Read from Elva WebSocket and apply to doc."""
-        async for message in ws:
-            self._applying_remote = True
             try:
-                self.doc.apply_update(message)
-            finally:
-                self._applying_remote = False
+                msg = json.loads(line.decode())
+                self._apply_from_emacs(msg)
+            except json.JSONDecodeError as e:
+                self._log(f"invalid JSON from emacs: {e}")
+
+    async def run(self):
+        """Main entry point - connect to Elva and bridge to Emacs."""
+        self._log(f"connecting to {self.url}")
+
+        # Observe text changes for Emacs
+        self.text.observe(self._on_text_change)
+
+        # Observe doc updates for server
+        self.doc.observe(self._on_doc_update)
+
+        try:
+            async with websockets.connect(self.url) as ws:
+                self._ws = ws
+                self._log("connected")
+
+                # Initial sync
+                await self._send_sync_step1()
+
+                # Also send our current state (proactive cross-sync)
+                update = bytes(self.doc.get_update(b"\x00"))
+                if update != b"\x00\x00":
+                    msg = encode_message((SYNC, SYNC_STEP2), update)
+                    await ws.send(msg)
+                    self._log("sent proactive sync step 2")
+
+                # Run all tasks concurrently
+                await asyncio.gather(
+                    self._ws_receiver(),
+                    self._ws_sender(),
+                    self._stdin_reader(),
+                )
+        except Exception as e:
+            self._log(f"error: {e}")
+            raise
+
+
+async def main():
+    if len(sys.argv) < 2:
+        print("Usage: elva-bridge.py <websocket-url>", file=sys.stderr)
+        print("Example: elva-bridge.py ws://localhost:8000/my-room-id", file=sys.stderr)
+        sys.exit(1)
+
+    url = sys.argv[1]
+    bridge = ElvaBridge(url)
+    await bridge.run()
 
 
 if __name__ == "__main__":
-    url = sys.argv[1] if len(sys.argv) > 1 else "ws://localhost:8000"
-    bridge = ElvaBridge(url)
-    asyncio.run(bridge.run())
+    asyncio.run(main())

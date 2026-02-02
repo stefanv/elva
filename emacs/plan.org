@@ -53,11 +53,12 @@ The cleaner solution: use pycrdt as a subprocess that speaks native Yjs protocol
 - [X] Create initial elva-bridge.py skeleton
 - [X] Create initial elva.el skeleton
 
-** TODO Phase 2: Protocol Implementation
-- [ ] Implement proper y-protocols sync in bridge
-  - [ ] State vector exchange
-  - [ ] Update encoding/decoding
-  - [ ] Initial document sync on connect
+** DONE Phase 2: Protocol Implementation
+- [X] Implement proper y-protocols sync in bridge
+  - [X] State vector exchange (SYNC_STEP1/SYNC_STEP2)
+  - [X] Update encoding/decoding (variable-length ints)
+  - [X] Initial document sync on connect
+  - [X] Incremental updates (SYNC_UPDATE)
 - [ ] Handle connection lifecycle
   - [ ] Reconnection logic
   - [ ] Error handling
