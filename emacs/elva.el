@@ -53,6 +53,7 @@
            :buffer (generate-new-buffer " *elva-bridge*")
            :command (list elva-bridge-program elva-bridge-script url)
            :connection-type 'pipe
+           :stderr (generate-new-buffer " *elva-bridge-stderr*")
            :filter (lambda (proc output)
                      (elva--filter proc output buffer))
            :sentinel (lambda (proc event)

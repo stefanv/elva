@@ -63,10 +63,11 @@ The cleaner solution: use pycrdt as a subprocess that speaks native Yjs protocol
   - [ ] Reconnection logic
   - [ ] Error handling
 
-** TODO Phase 3: Elva Server Support
-- [ ] Ensure Elva WebSocket endpoint works with y-protocols
-- [ ] Test with elva-bridge connecting
-- [ ] Handle room creation/joining
+** DONE Phase 3: Elva Server Support
+- [X] Ensure Elva WebSocket endpoint works with y-protocols
+- [X] Test with elva-bridge connecting
+- [X] Handle room creation/joining
+- [X] Verified bidirectional sync: Emacs ↔ Elva editor
 
 ** TODO Phase 4: Robustness
 - [ ] Multi-byte character handling (UTF-8 positions vs byte positions)
@@ -107,6 +108,15 @@ Both sides need to avoid re-sending changes they just received:
 1. Should the bridge be a long-running daemon or per-buffer process?
 2. How to handle the case where Emacs buffer has content but server doc is empty (or vice versa)?
 3. What's the right UX for conflict resolution if offline edits diverge significantly?
+
+* Future Improvements
+
+** TODO Elva Editor Connection Error Handling
+The Elva editor silently fails when connection issues occur:
+- [ ] Show error when connection fails (wrong host/port)
+- [ ] Show error when using wrong protocol (wss:// vs ws://)
+- [ ] Display connection status in UI
+- [ ] Retry with helpful error messages
 
 * References
 

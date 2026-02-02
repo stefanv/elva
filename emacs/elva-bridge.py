@@ -105,8 +105,9 @@ class ElvaBridge:
 
     def _on_text_change(self, event):
         """Called when Yjs text changes. Translate to Emacs operations."""
-        # Don't echo back to Emacs if we're applying changes from Emacs or server
-        if self._applying_from_server or self._applying_from_emacs:
+        # Don't echo back to Emacs if we're applying changes FROM Emacs
+        # DO send to Emacs if changes are from server
+        if self._applying_from_emacs:
             return
 
         pos = 0
@@ -282,4 +283,10 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        print(f"[bridge] FATAL: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
