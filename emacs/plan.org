@@ -1,0 +1,115 @@
+#+TITLE: Elva Emacs Client - Development Plan
+#+#+DATE: 2026-02-02
+
+* Overview
+
+This document tracks the plan for building a native Emacs client for Elva
+using pycrdt (Python bindings to yrs/Rust Yjs implementation).
+
+** Architecture
+
+Web clients connect directly to Elva via WebSocket using y-protocols:
+
+#+begin_src
+┌─────────────┐
+│ Web Client  │ ──────── WebSocket (y-protocols) ─────────┐
+│   (Yjs)     │                                           │
+└─────────────┘                                           ▼
+                                                    ┌─────────┐
+┌─────────────┐                                     │  Elva   │
+│ Web Client  │ ──────── WebSocket (y-protocols) ──►│ (server)│
+│   (Yjs)     │                                     │  pycrdt │
+└─────────────┘                                     └─────────┘
+#+end_src
+
+Emacs lacks a native Yjs implementation, so we add a bridge subprocess:
+
+#+begin_src
+┌─────────────┐    JSON/stdio     ┌──────────────┐    WebSocket     ┌─────────┐
+│   Emacs     │◄─────────────────►│ elva-bridge  │◄────────────────►│  Elva   │
+│  (elva.el)  │  insert/delete    │  (pycrdt)    │   y-protocols    │ (server)│
+└─────────────┘                   └──────────────┘                  └─────────┘
+#+end_src
+
+The bridge is a per-buffer subprocess that translates between Emacs's
+position-based edits and Yjs's CRDT protocol.
+
+** Why this approach?
+
+We initially tried to bridge crdt.el (existing Emacs CRDT package) with Elva,
+but discovered fundamental incompatibilities:
+
+1. crdt.el uses its own CRDT with ID-based ordering (site-id, clock)
+2. Yjs uses a different CRDT algorithm
+3. Position-based bridging fails because the two CRDTs order content differently
+4. Proper bridging would require complex ID translation between incompatible systems
+
+The cleaner solution: use pycrdt as a subprocess that speaks native Yjs protocol.
+
+* Implementation Status
+
+** DONE Phase 1: Basic Architecture
+- [X] Design architecture (Emacs ↔ Python bridge ↔ Elva)
+- [X] Create initial elva-bridge.py skeleton
+- [X] Create initial elva.el skeleton
+
+** TODO Phase 2: Protocol Implementation
+- [ ] Implement proper y-protocols sync in bridge
+  - [ ] State vector exchange
+  - [ ] Update encoding/decoding
+  - [ ] Initial document sync on connect
+- [ ] Handle connection lifecycle
+  - [ ] Reconnection logic
+  - [ ] Error handling
+
+** TODO Phase 3: Elva Server Support
+- [ ] Ensure Elva WebSocket endpoint works with y-protocols
+- [ ] Test with elva-bridge connecting
+- [ ] Handle room creation/joining
+
+** TODO Phase 4: Robustness
+- [ ] Multi-byte character handling (UTF-8 positions vs byte positions)
+- [ ] Cursor position preservation during remote edits
+- [ ] Batch rapid local changes to reduce traffic
+- [ ] Handle network latency gracefully
+
+** TODO Phase 5: Features
+- [ ] Awareness protocol (show other users' cursors)
+- [ ] User identification (names, colors)
+- [ ] Multiple buffers/rooms
+- [ ] Offline support (queue changes, sync on reconnect)
+
+** TODO Phase 6: Distribution
+- [ ] Package for MELPA
+- [ ] Documentation
+- [ ] Installation instructions (pycrdt dependency)
+
+* Technical Notes
+
+** Position Indexing
+- Emacs uses 1-based positions (point starts at 1)
+- Yjs uses 0-based positions
+- Bridge must convert: emacs_pos = yjs_pos + 1
+
+** Echo Prevention
+Both sides need to avoid re-sending changes they just received:
+- elva.el: ~elva--applying-remote~ flag
+- elva-bridge.py: ~_applying_remote~ flag
+
+** Dependencies
+- Python 3.8+
+- pycrdt: ~pip install pycrdt~
+- websockets: ~pip install websockets~
+
+* Open Questions
+
+1. Should the bridge be a long-running daemon or per-buffer process?
+2. How to handle the case where Emacs buffer has content but server doc is empty (or vice versa)?
+3. What's the right UX for conflict resolution if offline edits diverge significantly?
+
+* References
+
+- Yjs: https://github.com/yjs/yjs
+- pycrdt: https://github.com/jupyter-server/pycrdt
+- yrs (Rust): https://github.com/y-crdt/y-crdt
+- y-protocols: https://github.com/yjs/y-protocols
