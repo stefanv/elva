@@ -118,12 +118,11 @@ The Elva editor silently fails when connection issues occur:
 - [ ] Display connection status in UI
 - [ ] Retry with helpful error messages
 
-** TODO Auto-detect ws:// vs wss://
-Currently requires ~--unsafe~ flag for non-TLS servers, which is bad UX:
-- [ ] Try wss:// first, fall back to ws:// on failure
-- [ ] Or auto-detect based on port (443 = wss, others = ws)
-- [ ] Or probe the server to check TLS support
-- [ ] Apply fix to both Elva editor and elva-bridge
+** DONE Auto-detect ws:// vs wss://
+- [X] Client: probe_tls() function to detect TLS support
+- [X] Client: safe=None (default) enables auto-detection
+- [X] Server: --ssl-cert and --ssl-key options for TLS
+- [X] Server: require TLS for non-localhost hosts
 
 * References
 
