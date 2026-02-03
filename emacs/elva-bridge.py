@@ -95,6 +95,34 @@ class ElvaBridge:
         self._ws = None
         self._send_queue = asyncio.Queue()
 
+    def _byte_pos_to_char_pos(self, byte_pos: int) -> int:
+        """Convert UTF-8 byte position to character position."""
+        text_str = str(self.text)
+        text_bytes = text_str.encode("utf-8")
+        # Clamp to valid range
+        byte_pos = min(byte_pos, len(text_bytes))
+        # Decode the bytes up to byte_pos to get character count
+        prefix = text_bytes[:byte_pos].decode("utf-8", errors="replace")
+        return len(prefix)
+
+    def _char_pos_to_byte_pos(self, char_pos: int) -> int:
+        """Convert character position to UTF-8 byte position."""
+        text_str = str(self.text)
+        # Clamp to valid range
+        char_pos = min(char_pos, len(text_str))
+        # Encode the characters up to char_pos to get byte count
+        prefix = text_str[:char_pos]
+        return len(prefix.encode("utf-8"))
+
+    def _byte_count_to_char_count(self, byte_pos: int, byte_count: int) -> int:
+        """Convert UTF-8 byte count to character count at a given position."""
+        text_str = str(self.text)
+        text_bytes = text_str.encode("utf-8")
+        # Get the substring in bytes and decode to get character count
+        end_pos = min(byte_pos + byte_count, len(text_bytes))
+        substring_bytes = text_bytes[byte_pos:end_pos]
+        return len(substring_bytes.decode("utf-8", errors="replace"))
+
     def _send_to_emacs(self, msg: dict):
         """Send JSON message to Emacs via stdout."""
         print(json.dumps(msg), flush=True)
@@ -110,32 +138,49 @@ class ElvaBridge:
         if self._applying_from_emacs:
             return
 
-        pos = 0
+        # Delta positions are in UTF-8 bytes, Emacs needs character positions
+        byte_pos = 0
         for delta in event.delta:
             if "retain" in delta:
-                pos += delta["retain"]
+                byte_pos += delta["retain"]
             elif "insert" in delta:
                 text = delta["insert"]
-                self._send_to_emacs({"op": "insert", "pos": pos, "text": text})
-                pos += len(text)
+                char_pos = self._byte_pos_to_char_pos(byte_pos)
+                self._send_to_emacs({"op": "insert", "pos": char_pos, "text": text})
+                byte_pos += len(text.encode("utf-8"))
             elif "delete" in delta:
-                count = delta["delete"]
-                self._send_to_emacs({"op": "delete", "pos": pos, "count": count})
+                byte_count = delta["delete"]
+                char_pos = self._byte_pos_to_char_pos(byte_pos)
+                char_count = self._byte_count_to_char_count(byte_pos, byte_count)
+                self._send_to_emacs({"op": "delete", "pos": char_pos, "count": char_count})
 
     def _apply_from_emacs(self, msg: dict):
-        """Apply an edit from Emacs to the Yjs doc."""
+        """Apply an edit from Emacs to the Yjs doc.
+
+        Emacs sends character positions, but pycrdt uses UTF-8 byte positions.
+        """
         self._applying_from_emacs = True  # Don't echo back to Emacs
         try:
             op = msg.get("op")
             if op == "insert":
-                self.text.insert(msg["pos"], msg["text"])
+                char_pos = msg["pos"]
+                byte_pos = self._char_pos_to_byte_pos(char_pos)
+                self.text.insert(byte_pos, msg["text"])
             elif op == "delete":
-                self.text.delete(msg["pos"], msg["count"])
+                char_pos = msg["pos"]
+                char_count = msg["count"]
+                byte_pos = self._char_pos_to_byte_pos(char_pos)
+                # Calculate byte count from character count
+                text_str = str(self.text)
+                end_char_pos = min(char_pos + char_count, len(text_str))
+                byte_end = self._char_pos_to_byte_pos(end_char_pos)
+                byte_count = byte_end - byte_pos
+                del self.text[byte_pos:byte_pos + byte_count]
             elif op == "sync":
                 # Full sync request - clear and set content
                 with self.doc.transaction():
                     if len(self.text) > 0:
-                        self.text.delete(0, len(self.text))
+                        del self.text[0:len(self.text)]
                     if msg.get("text"):
                         self.text.insert(0, msg["text"])
         finally:

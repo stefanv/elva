@@ -70,7 +70,9 @@ The cleaner solution: use pycrdt as a subprocess that speaks native Yjs protocol
 - [X] Verified bidirectional sync: Emacs ↔ Elva editor
 
 ** TODO Phase 4: Robustness
-- [ ] Multi-byte character handling (UTF-8 positions vs byte positions)
+- [X] Multi-byte character handling (UTF-8 positions vs byte positions)
+  - pycrdt uses UTF-8 byte positions, Emacs uses character positions
+  - Bridge converts between them in both directions
 - [ ] Cursor position preservation during remote edits
 - [ ] Batch rapid local changes to reduce traffic
 - [ ] Handle network latency gracefully
@@ -89,9 +91,12 @@ The cleaner solution: use pycrdt as a subprocess that speaks native Yjs protocol
 * Technical Notes
 
 ** Position Indexing
-- Emacs uses 1-based positions (point starts at 1)
-- Yjs uses 0-based positions
-- Bridge must convert: emacs_pos = yjs_pos + 1
+- Emacs uses 1-based character positions (point starts at 1)
+- pycrdt uses 0-based UTF-8 byte positions
+- Bridge converts between them:
+  - Emacs char pos → UTF-8 byte pos: encode prefix, count bytes
+  - UTF-8 byte pos → Emacs char pos: decode prefix, count chars
+  - elva.el adds/subtracts 1 for Emacs's 1-based indexing
 
 ** Echo Prevention
 Both sides need to avoid re-sending changes they just received:
