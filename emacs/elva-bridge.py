@@ -311,6 +311,24 @@ class ElvaBridge:
                     self._ws_sender(),
                     self._stdin_reader(),
                 )
+        except websockets.exceptions.InvalidStatus as e:
+            # HTTP error from server - use the server's reason phrase
+            status_code = e.response.status_code
+            reason = e.response.reason_phrase
+            error_msg = f"Server error: HTTP {status_code} {reason}"
+            self._log(error_msg)
+            self._send_to_emacs({"op": "error", "message": error_msg})
+            raise
+        except websockets.exceptions.InvalidURI as e:
+            error_msg = f"Invalid URL: {e}"
+            self._log(error_msg)
+            self._send_to_emacs({"op": "error", "message": error_msg})
+            raise
+        except OSError as e:
+            error_msg = f"Connection failed: {e}"
+            self._log(error_msg)
+            self._send_to_emacs({"op": "error", "message": error_msg})
+            raise
         except Exception as e:
             self._log(f"error: {e}")
             raise

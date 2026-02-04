@@ -192,7 +192,10 @@ Adjusts point appropriately when edits occur before the cursor."
              (delete-char count))
            ;; Adjust point if delete was before cursor
            (when (< pos old-point)
-             (goto-char (max pos (- old-point count))))))))))
+             (goto-char (max pos (- old-point count))))))
+        ("error"
+         (let ((error-msg (alist-get 'message msg)))
+           (message "Elva error: %s" error-msg)))))))
 
 (defun elva--sentinel (proc event buffer)
   "Handle process PROC state change EVENT for BUFFER."

@@ -127,6 +127,13 @@ The Elva editor silently fails when connection issues occur:
 - [ ] Display connection status in UI
 - [ ] Retry with helpful error messages
 
+** TODO Bridge Error Reporting
+- [ ] Report HTTP errors (403 for invalid room ID) to Emacs
+- [ ] Show meaningful error messages instead of "connection lost"
+
+** TODO TLS Probe Noise
+- [ ] Consider suppressing or making TLS probe errors quieter on server
+
 ** DONE Auto-detect ws:// vs wss://
 - [X] Client: probe_tls() function to detect TLS support
 - [X] Client: safe=None (default) enables auto-detection
