@@ -20,20 +20,21 @@
 (setq elva-bridge-program "~/src/elva/.venv/bin/python3")
 
 ;; Connect a buffer (default host:port is localhost:7654)
-M-x elva-connect RET your-room-id RET
+;; Room IDs must be 10-250 characters
+M-x elva-connect RET my-room-0001 RET
 
 ;; Or with explicit host/port:
-M-x elva-connect RET localhost:7654/your-room-id RET
+M-x elva-connect RET localhost:7654/my-room-0001 RET
 ```
 
 ## Test with Elva Editor (second client)
 
 ```bash
 # Uses default port 7654
-.venv/bin/elva editor --host localhost --identifier your-room-id
+.venv/bin/elva editor --host localhost --identifier my-room-0001
 
 # Or specify a custom port
-.venv/bin/elva editor --host localhost --port 46795 --identifier your-room-id
+.venv/bin/elva editor --host localhost --port 46795 --identifier my-room-0001
 ```
 
 ## Useful Commands
@@ -63,7 +64,7 @@ Returns JSON with active rooms:
 ```json
 {
   "rooms": [
-    {"identifier": "room-id-here", "clients": 2, "persistent": true}
+    {"identifier": "my-room-0001", "clients": 2, "persistent": true}
   ],
   "count": 1
 }

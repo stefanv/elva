@@ -7,13 +7,13 @@
 ;; (elva-bridge.py) that handles Yjs protocol communication.
 ;;
 ;; Usage:
-;;   M-x elva-connect RET my-room-id RET
+;;   M-x elva-connect RET my-room-0001 RET
 ;;
-;; URL formats accepted:
-;;   my-room-id                 -> ws://localhost:7654/my-room-id
-;;   myhost/my-room-id          -> ws://myhost:7654/my-room-id
-;;   myhost:8000/my-room-id     -> ws://myhost:8000/my-room-id
-;;   ws://myhost:8000/my-room   -> ws://myhost:8000/my-room
+;; URL formats accepted (room IDs must be 10-250 chars):
+;;   my-room-0001                 -> ws://localhost:7654/my-room-0001
+;;   myhost/my-room-0001          -> ws://myhost:7654/my-room-0001
+;;   myhost:8000/my-room-0001     -> ws://myhost:8000/my-room-0001
+;;   ws://myhost:8000/my-project   -> ws://myhost:8000/my-project
 ;;
 ;; Requirements:
 ;;   - Python 3.8+
@@ -99,11 +99,11 @@ hyphens, and underscores."
 
 (defun elva--normalize-url (input)
   "Normalize INPUT into a full WebSocket URL.
-Accepts various formats:
-  room-id                    -> ws://localhost:7654/room-id
-  host/room-id               -> ws://host:7654/room-id
-  host:port/room-id          -> ws://host:port/room-id
-  ws://host:port/room-id     -> ws://host:port/room-id"
+Accepts various formats (room IDs must be 10-250 chars):
+  my-room-0001              -> ws://localhost:7654/my-room-0001
+  host/my-room-0001         -> ws://host:7654/my-room-0001
+  host:port/my-room-0001    -> ws://host:port/my-room-0001
+  ws://host:port/my-project  -> ws://host:port/my-project"
   (let ((url input))
     ;; Strip ws:// or wss:// prefix if present
     (when (string-match "^wss?://" url)
@@ -140,13 +140,13 @@ Accepts various formats:
 
 (defun elva-connect (url)
   "Connect current buffer to Elva server at URL.
-URL can be in various formats:
-  room-id                    -> ws://localhost:7654/room-id
-  host/room-id               -> ws://host:7654/room-id
-  host:port/room-id          -> ws://host:port/room-id
-  ws://host:port/room-id     -> ws://host:port/room-id"
+URL can be in various formats (room IDs must be 10-250 chars):
+  my-room-0001              -> ws://localhost:7654/my-room-0001
+  host/my-room-0001         -> ws://host:7654/my-room-0001
+  host:port/my-room-0001    -> ws://host:port/my-room-0001
+  ws://host:port/my-project  -> ws://host:port/my-project"
   (interactive
-   (list (read-string "Elva (room-id or host:port/room-id): ")))
+   (list (read-string "Elva room (10+ chars, e.g. my-room-0001): ")))
   (when elva--process
     (error "Already connected.  Use `elva-disconnect' first"))
   (let ((full-url (elva--normalize-url url)))
