@@ -84,6 +84,13 @@ Set to 0 to disable automatic reconnection."
 (defvar-local elva--url nil
   "The URL this buffer is connected to.")
 
+(defvar-local elva--room-id nil
+  "The room ID this buffer is connected to.")
+
+(defvar-local elva--push-buffer-on-sync nil
+  "If non-nil, push buffer content to room after sync completes.
+Used by `elva-room-from-buffer' to send buffer only if room is empty.")
+
 (defun elva--validate-room-id (room-id)
   "Validate ROOM-ID and return an error message or nil if valid.
 Room IDs must be 10-250 characters, containing only letters, numbers,
@@ -138,8 +145,26 @@ Accepts various formats (room IDs must be 10-250 chars):
 (defvar-local elva--reconnect-timer nil
   "Timer for reconnection attempts.")
 
+(defun elva--extract-room-id (url)
+  "Extract the room ID from a WebSocket URL."
+  (if (string-match "/\\([^/]+\\)$" url)
+      (match-string 1 url)
+    url))
+
+(defun elva--modeline-string ()
+  "Return a string for the modeline showing Elva connection status."
+  (when elva--room-id
+    (if (and elva--process (process-live-p elva--process))
+        (format " Elva[%s]" elva--room-id)
+      (format " Elva[%s:disconnected]" elva--room-id))))
+
+;; Add to modeline
+(add-to-list 'mode-line-misc-info
+             '(:eval (elva--modeline-string)))
+
 (defun elva-connect (url)
-  "Connect current buffer to Elva server at URL.
+  "Connect to Elva room and open it in a new buffer.
+Creates a new buffer named after the room ID and displays the room contents.
 URL can be in various formats (room IDs must be 10-250 chars):
   my-room-0001              -> ws://localhost:7654/my-room-0001
   host/my-room-0001         -> ws://host:7654/my-room-0001
@@ -147,15 +172,46 @@ URL can be in various formats (room IDs must be 10-250 chars):
   ws://host:port/my-project  -> ws://host:port/my-project"
   (interactive
    (list (read-string "Elva room (10+ chars, e.g. my-room-0001): ")))
+  (let* ((full-url (elva--normalize-url url))
+         (room-id (elva--extract-room-id full-url))
+         (buf-name (format "*elva:%s*" room-id))
+         (buffer (get-buffer buf-name)))
+    ;; Check if already connected to this room
+    (when (and buffer
+               (buffer-live-p buffer)
+               (with-current-buffer buffer elva--process)
+               (process-live-p (with-current-buffer buffer elva--process)))
+      (pop-to-buffer buffer)
+      (error "Already connected to room '%s'" room-id))
+    ;; Create new buffer for the room
+    (setq buffer (get-buffer-create buf-name))
+    (pop-to-buffer buffer)
+    (with-current-buffer buffer
+      (setq elva--url full-url)
+      (setq elva--room-id room-id)
+      (setq elva--reconnect-count 0)
+      (elva--do-connect full-url nil))))
+
+(defun elva-room-from-buffer (url)
+  "Push current buffer contents to an Elva room.
+Fails if the room already has content.
+URL can be in various formats (room IDs must be 10-250 chars)."
+  (interactive
+   (list (read-string "Elva room to push buffer to: ")))
   (when elva--process
     (error "Already connected.  Use `elva-disconnect' first"))
-  (let ((full-url (elva--normalize-url url)))
+  (let* ((full-url (elva--normalize-url url))
+         (room-id (elva--extract-room-id full-url)))
     (setq elva--url full-url)
+    (setq elva--room-id room-id)
     (setq elva--reconnect-count 0)
-    (elva--do-connect full-url)))
+    (setq elva--push-buffer-on-sync t)  ; Will push after sync if room is empty
+    (elva--do-connect full-url nil)
+    (message "Elva: connecting, will push buffer if room is empty...")))
 
-(defun elva--do-connect (url)
-  "Internal function to establish connection to URL."
+(defun elva--do-connect (url &optional send-buffer-content)
+  "Internal function to establish connection to URL.
+If SEND-BUFFER-CONTENT is non-nil, send current buffer content to room."
   (let ((buffer (current-buffer)))
     (setq elva--process
           (make-process
@@ -168,14 +224,15 @@ URL can be in various formats (room IDs must be 10-250 chars):
                      (elva--filter proc output buffer))
            :sentinel (lambda (proc event)
                        (elva--sentinel proc event buffer)))))
-  ;; Send initial buffer content (only on first connect, not reconnect)
-  (when (zerop elva--reconnect-count)
+  ;; Send initial buffer content only if requested
+  (when (and send-buffer-content (zerop elva--reconnect-count))
     (let ((content (buffer-string)))
       (when (> (length content) 0)
         (elva--send `((op . "insert") (pos . 0) (text . ,content))))))
   ;; Watch for local changes
   (add-hook 'after-change-functions #'elva--after-change nil t)
-  (message "Connected to Elva: %s" url))
+  (message "Connected to Elva: %s" url)
+  (force-mode-line-update))
 
 (defun elva--after-change (beg end old-len)
   "Handle local buffer change between BEG and END.
@@ -264,6 +321,21 @@ Adjusts point appropriately when edits occur before the cursor."
            ;; Adjust point if delete was before cursor
            (when (< pos old-point)
              (goto-char (max pos (- old-point count))))))
+        ("sync_complete"
+         (let ((room-length (alist-get 'length msg))
+               (content (alist-get 'content msg)))
+           ;; If we want to push our buffer but room has content, error
+           (when elva--push-buffer-on-sync
+             (setq elva--push-buffer-on-sync nil)
+             (if (> room-length 0)
+                 (progn
+                   (message "Elva: room already has content (%d chars), not overwriting" room-length)
+                   (elva-disconnect))
+               ;; Room is empty, send our buffer content
+               (let ((buf-content (buffer-string)))
+                 (when (> (length buf-content) 0)
+                   (elva--send `((op . "insert") (pos . 0) (text . ,buf-content)))
+                   (message "Elva: pushed buffer to room")))))))
         ("error"
          (let ((error-msg (alist-get 'message msg)))
            (message "Elva error: %s" error-msg)))))))
@@ -315,6 +387,7 @@ Adjusts point appropriately when edits occur before the cursor."
   (interactive)
   ;; Clear URL to prevent reconnection
   (setq elva--url nil)
+  (setq elva--room-id nil)
   ;; Cancel reconnection timer
   (when elva--reconnect-timer
     (cancel-timer elva--reconnect-timer)
@@ -330,6 +403,7 @@ Adjusts point appropriately when edits occur before the cursor."
     (delete-process elva--process)
     (setq elva--process nil))
   (remove-hook 'after-change-functions #'elva--after-change t)
+  (force-mode-line-update)
   (message "Disconnected from Elva"))
 
 (defun elva-status ()
