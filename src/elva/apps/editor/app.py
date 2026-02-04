@@ -66,6 +66,13 @@ class UI(App):
         ansi_color = c.get("ansi_color", False)
         super().__init__(ansi_color=ansi_color)
 
+        # Set title to show room identifier
+        identifier = c.get("identifier", "")
+        if identifier:
+            self.title = f"Elva - {identifier}"
+        else:
+            self.title = "Elva"
+
         # document structure
         self.ydoc = Doc()
         self.ytext = Text()
