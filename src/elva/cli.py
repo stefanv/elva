@@ -15,7 +15,7 @@ from click.core import ParameterSource
 from deepmerge import always_merger
 
 from elva.auth import Password
-from elva.core import APP_NAME, CONFIG_NAME, FILE_SUFFIX, LOG_SUFFIX
+from elva.core import APP_NAME, CONFIG_NAME, DEFAULT_PORT, FILE_SUFFIX, LOG_SUFFIX
 from elva.store import get_metadata
 
 #
@@ -588,7 +588,8 @@ port_option = click.option(
     "-p",
     "port",
     type=click.INT,
-    help="Port of the syncing server.",
+    default=DEFAULT_PORT,
+    help=f"Port of the syncing server (default: {DEFAULT_PORT}).",
 )
 """A CLI command decorator defining an option for the port to connect to."""
 

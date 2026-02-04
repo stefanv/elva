@@ -7,7 +7,7 @@
 ;; (elva-bridge.py) that handles Yjs protocol communication.
 ;;
 ;; Usage:
-;;   M-x elva-connect RET ws://localhost:8000/room/my-room RET
+;;   M-x elva-connect RET ws://localhost:7654/my-room-id RET
 ;;
 ;; Requirements:
 ;;   - Python 3.8+
@@ -65,6 +65,11 @@ Set to 0 to disable automatic reconnection."
   :type 'integer
   :group 'elva)
 
+(defcustom elva-default-port 7654
+  "Default port for Elva server connections."
+  :type 'integer
+  :group 'elva)
+
 (defvar-local elva--url nil
   "The URL this buffer is connected to.")
 
@@ -76,7 +81,9 @@ Set to 0 to disable automatic reconnection."
 
 (defun elva-connect (url)
   "Connect current buffer to Elva server at URL."
-  (interactive "sElva URL (e.g., ws://localhost:8000/room/test): ")
+  (interactive
+   (list (read-string
+          (format "Elva URL (e.g., ws://localhost:%d/room-id): " elva-default-port))))
   (when elva--process
     (error "Already connected.  Use `elva-disconnect' first"))
   (setq elva--url url)

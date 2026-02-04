@@ -5,6 +5,9 @@ Definition of library constants.
 APP_NAME = "ELVA"
 """Default app name."""
 
+DEFAULT_PORT = 7654
+"""Default port for server and client connections."""
+
 CONFIG_NAME = APP_NAME.lower() + ".toml"
 """Default ELVA configuration file name."""
 

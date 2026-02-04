@@ -3,6 +3,10 @@
 ## Start the Server
 
 ```bash
+# Uses default port 7654
+.venv/bin/elva server
+
+# Or specify a custom port
 .venv/bin/elva server --port 46795
 ```
 
@@ -15,13 +19,17 @@
 ;; Set Python to use the venv (required for pycrdt/websockets)
 (setq elva-bridge-program "~/src/elva/.venv/bin/python3")
 
-;; Connect a buffer
-M-x elva-connect RET ws://localhost:46795/your-room-id RET
+;; Connect a buffer (default port is 7654)
+M-x elva-connect RET ws://localhost:7654/your-room-id RET
 ```
 
 ## Test with Elva Editor (second client)
 
 ```bash
+# Uses default port 7654
+.venv/bin/elva editor --host localhost --identifier your-room-id
+
+# Or specify a custom port
 .venv/bin/elva editor --host localhost --port 46795 --identifier your-room-id
 ```
 
@@ -36,12 +44,16 @@ M-x elva-connect RET ws://localhost:46795/your-room-id RET
 
 Using the CLI:
 ```bash
-.venv/bin/elva rooms --host localhost --port 46795
+# Uses default port 7654
+.venv/bin/elva rooms
+
+# Or specify host/port
+.venv/bin/elva rooms --host localhost --port 7654
 ```
 
 Or via HTTP:
 ```bash
-curl http://localhost:46795/rooms
+curl http://localhost:7654/rooms
 ```
 
 Returns JSON with active rooms:

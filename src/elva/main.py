@@ -19,7 +19,7 @@ from elva.cli import (
     file_paths_option_and_argument,
     pass_config,
 )
-from elva.core import APP_NAME, ELVA_APP_DIR_NAME, get_app_import_path
+from elva.core import APP_NAME, DEFAULT_PORT, ELVA_APP_DIR_NAME, get_app_import_path
 
 
 @click.group()
@@ -77,8 +77,8 @@ def context(config: dict, *args: tuple, **kwargs: dict):
     "-p",
     "port",
     type=click.INT,
-    default=8000,
-    help="Port of the server to query.",
+    default=DEFAULT_PORT,
+    help=f"Port of the server to query (default: {DEFAULT_PORT}).",
 )
 @click.option(
     "--safe/--unsafe",

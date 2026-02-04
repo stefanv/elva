@@ -136,6 +136,26 @@ Note: Connection status in UI and retry logic are deferred to Phase 5.
 - [X] Report HTTP errors (403 for invalid room ID) to Emacs
 - [X] Show meaningful error messages instead of "connection lost"
 
+** DONE Default Port
+- [X] Define a default port (7654) in elva.core.DEFAULT_PORT
+- [X] Server uses default port when --port not specified
+- [X] Editor/CLI clients use default port when not specified
+- [X] Emacs client has elva-default-port customization
+- [X] Makes launching server and connecting clients more predictable
+
+** TODO Emacs: List Rooms
+- [ ] Add ~elva-list-rooms~ command to query server for available rooms
+- [ ] Display rooms in a buffer (identifier, client count)
+- [ ] Allow selecting a room to connect to
+
+** TODO Emacs: Safe Room Connection
+Currently ~elva-connect~ sends buffer content to the room, which would overwrite
+existing room content. This is dangerous for joining existing rooms.
+- [ ] ~elva-connect~ should open room content in a NEW buffer, not current buffer
+- [ ] Add ~elva-buffer-to-room~ command to push current buffer content to a room
+- [ ] Never overwrite existing room content on connect
+- [ ] Perhaps prompt user if room has content: "Room has content. Open in new buffer?"
+
 ** TODO TLS Probe Noise
 - [ ] Consider suppressing or making TLS probe errors quieter on server
 
