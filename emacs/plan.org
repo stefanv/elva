@@ -151,10 +151,17 @@ Note: Connection status in UI and retry logic are deferred to Phase 5.
 ** TODO Emacs: Safe Room Connection
 Currently ~elva-connect~ sends buffer content to the room, which would overwrite
 existing room content. This is dangerous for joining existing rooms.
-- [ ] ~elva-connect~ should open room content in a NEW buffer, not current buffer
-- [ ] Add ~elva-buffer-to-room~ command to push current buffer content to a room
-- [ ] Never overwrite existing room content on connect
-- [ ] Perhaps prompt user if room has content: "Room has content. Open in new buffer?"
+- [X] ~elva-connect~ should open room content in a NEW buffer, not current buffer
+- [X] Add ~elva-room-from-buffer~ command to push current buffer content to a room
+- [X] Fail if room already has content when pushing buffer
+- [X] Display room name in modeline
+
+** DONE Elva Editor: Display Room Name
+- [X] Show current room identifier in the app title
+
+** DONE Server: Improved Connection Logging
+- [X] Log client IP address on connection
+- [X] Log room identifier on connection
 
 ** TODO TLS Probe Noise
 - [ ] Consider suppressing or making TLS probe errors quieter on server
