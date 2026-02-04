@@ -84,6 +84,19 @@ Set to 0 to disable automatic reconnection."
 (defvar-local elva--url nil
   "The URL this buffer is connected to.")
 
+(defun elva--validate-room-id (room-id)
+  "Validate ROOM-ID and return an error message or nil if valid.
+Room IDs must be 10-250 characters, containing only letters, numbers,
+hyphens, and underscores."
+  (cond
+   ((< (length room-id) 10)
+    (format "Room ID too short (%d chars, need 10-250)" (length room-id)))
+   ((> (length room-id) 250)
+    (format "Room ID too long (%d chars, max 250)" (length room-id)))
+   ((not (string-match "^[A-Za-z0-9_-]+$" room-id))
+    "Room ID must contain only letters, numbers, hyphens, underscores")
+   (t nil)))
+
 (defun elva--normalize-url (input)
   "Normalize INPUT into a full WebSocket URL.
 Accepts various formats:
@@ -102,12 +115,18 @@ Accepts various formats:
       (let ((host (match-string 1 url))
             (port (match-string 2 url))
             (room (match-string 3 url)))
+        ;; Validate room ID
+        (when-let ((err (elva--validate-room-id room)))
+          (error "Invalid room ID: %s" err))
         (format "ws://%s%s/%s"
                 host
                 (or port (format ":%d" elva-default-port))
                 room)))
      ;; No slash - assume it's just a room ID
      ((not (string-match "/" url))
+      ;; Validate room ID
+      (when-let ((err (elva--validate-room-id url)))
+        (error "Invalid room ID: %s" err))
       (format "ws://%s:%d/%s" elva-default-host elva-default-port url))
      ;; Fallback - return as-is with ws:// prefix
      (t
