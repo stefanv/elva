@@ -354,7 +354,7 @@ Adjusts point appropriately when edits occur before the cursor."
                (let ((buf-content (buffer-string)))
                  (when (> (length buf-content) 0)
                    (elva--send `((op . "insert") (pos . 0) (text . ,buf-content)))
-                   (message "Elva: pushed buffer to room")))))))
+                   (message "Elva: pushed buffer to room"))))))
            (force-mode-line-update)))
         ("error"
          (let ((error-msg (alist-get 'message msg)))
