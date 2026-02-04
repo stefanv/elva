@@ -92,6 +92,9 @@ Set to 0 to disable automatic reconnection."
 Used by `elva-room-from-buffer' to send buffer only if room is empty.
 Values: nil, `if-empty' (push only if room empty), `always' (reconnect).")
 
+(defvar-local elva--saved-content nil
+  "Saved buffer content for restoration during reconnection.")
+
 (defun elva--validate-room-id (room-id)
   "Validate ROOM-ID and return an error message or nil if valid.
 Room IDs must be 10-250 characters, containing only letters, numbers,
@@ -190,10 +193,12 @@ URL can be in various formats (room IDs must be 10-250 chars):
                (process-live-p (with-current-buffer buffer elva--process)))
       (pop-to-buffer buffer)
       (error "Already connected to room '%s'" room-id))
-    ;; Create new buffer for the room
+    ;; Create or reuse buffer for the room
     (setq buffer (get-buffer-create buf-name))
     (pop-to-buffer buffer)
     (with-current-buffer buffer
+      ;; Clear any existing content to avoid duplication
+      (erase-buffer)
       (setq elva--url full-url)
       (setq elva--room-id room-id)
       (setq elva--reconnect-count 0)
@@ -334,16 +339,16 @@ Adjusts point appropriately when edits occur before the cursor."
                (push-mode elva--push-buffer-on-sync))
            (setq elva--push-buffer-on-sync nil)
            (cond
-            ;; Reconnect mode: push our content if room is empty
+            ;; Reconnect mode: restore our saved content if room is empty
             ((eq push-mode 'always)
              (if (> room-length 0)
-                 ;; Room has content from another client, use it
-                 (message "Elva: reconnected, room has content from other clients")
-               ;; Room is empty, restore our buffer content
-               (let ((buf-content (buffer-string)))
-                 (when (> (length buf-content) 0)
-                   (elva--send `((op . "insert") (pos . 0) (text . ,buf-content)))
-                   (message "Elva: reconnected and restored buffer to room")))))
+                 ;; Room has content, we'll use it (already synced)
+                 (message "Elva: reconnected, using room content")
+               ;; Room is empty, restore our saved content
+               (when (and elva--saved-content (> (length elva--saved-content) 0))
+                 (elva--send `((op . "insert") (pos . 0) (text . ,elva--saved-content)))
+                 (message "Elva: reconnected and restored buffer to room")))
+             (setq elva--saved-content nil))
             ;; elva-room-from-buffer mode: fail if room has content
             ((eq push-mode 'if-empty)
              (if (> room-length 0)
@@ -392,7 +397,12 @@ Adjusts point appropriately when edits occur before the cursor."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (setq elva--reconnect-timer nil)
-      ;; On reconnect, push our buffer content if room is empty
+      ;; Save buffer content to restore if room is empty
+      (let ((saved-content (buffer-string)))
+        (setq elva--saved-content saved-content))
+      ;; Clear buffer to avoid duplication when room syncs
+      (let ((inhibit-modification-hooks t))
+        (erase-buffer))
       (setq elva--push-buffer-on-sync 'always)
       (condition-case err
           (elva--do-connect elva--url)
