@@ -30,6 +30,30 @@ M-x elva-connect RET ws://localhost:46795/your-room-id RET
 - `M-x elva-status` - check connection
 - `M-x elva-disconnect` - disconnect
 
+## Server API
+
+### List Rooms
+
+Using the CLI:
+```bash
+.venv/bin/elva rooms --host localhost --port 46795
+```
+
+Or via HTTP:
+```bash
+curl http://localhost:46795/rooms
+```
+
+Returns JSON with active rooms:
+```json
+{
+  "rooms": [
+    {"identifier": "room-id-here", "clients": 2, "persistent": true}
+  ],
+  "count": 1
+}
+```
+
 ## Testing Scenarios
 
 ### Basic sync

@@ -2,6 +2,7 @@
 Module containing server components.
 """
 
+import json
 import logging
 import re
 import socket
@@ -479,12 +480,43 @@ class WebsocketServer(Component):
         # the request path always includes a `/` as first character
         path = request.path[1:]
 
+        # Handle /rooms endpoint - return list of active rooms as JSON
+        if path == "rooms":
+            rooms_data = self.get_rooms_info()
+            body = json.dumps(rooms_data).encode("utf-8")
+            return Response(
+                status_code=HTTPStatus.OK,
+                headers=Headers({"Content-Type": "application/json"}),
+                reason_phrase="OK",
+                body=body,
+            )
+
         if not RE_IDENTIFIER.match(path):
             return Response(
                 status_code=HTTPStatus.FORBIDDEN,
                 headers=Headers(),
                 reason_phrase="Invalid identifier",
             )
+
+    def get_rooms_info(self) -> dict:
+        """
+        Get information about active rooms.
+
+        Returns:
+            A dictionary containing room information.
+        """
+        rooms_list = []
+        for identifier, room in self.rooms.items():
+            if room.states.ACTIVE in room.state:
+                rooms_list.append({
+                    "identifier": identifier,
+                    "clients": len(room.clients),
+                    "persistent": room.persistent,
+                })
+        return {
+            "rooms": rooms_list,
+            "count": len(rooms_list),
+        }
 
     async def get_room(self, identifier: str) -> Room:
         """

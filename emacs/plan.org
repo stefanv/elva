@@ -120,16 +120,21 @@ Both sides need to avoid re-sending changes they just received:
 
 * Future Improvements
 
-** TODO Elva Editor Connection Error Handling
-The Elva editor silently fails when connection issues occur:
-- [ ] Show error when connection fails (wrong host/port)
-- [ ] Show error when using wrong protocol (wss:// vs ws://)
-- [ ] Display connection status in UI
-- [ ] Retry with helpful error messages
+** DONE Elva Editor Connection Error Handling
+The Elva editor now properly handles connection errors:
+- [X] Show error when connection fails (wrong host/port)
+- [X] Show error when using wrong protocol (wss:// vs ws://)
+- [X] Show HTTP errors with status code and reason (e.g., "Invalid identifier")
+Note: Connection status in UI and retry logic are deferred to Phase 5.
 
-** TODO Bridge Error Reporting
-- [ ] Report HTTP errors (403 for invalid room ID) to Emacs
-- [ ] Show meaningful error messages instead of "connection lost"
+** DONE Room Listing API
+- [X] GET /rooms endpoint returns JSON list of active rooms
+- [X] Includes room identifier, client count, and persistence flag
+- [X] CLI command: ~elva rooms --host HOST --port PORT~
+
+** DONE Bridge Error Reporting
+- [X] Report HTTP errors (403 for invalid room ID) to Emacs
+- [X] Show meaningful error messages instead of "connection lost"
 
 ** TODO TLS Probe Noise
 - [ ] Consider suppressing or making TLS probe errors quieter on server
