@@ -9,6 +9,7 @@ from typing import Any, Literal
 from pycrdt import Doc, Text
 from textual.app import App
 from textual.binding import Binding
+from textual.widgets import Footer
 from websockets.exceptions import InvalidStatus, WebSocketException
 
 from elva.cli import get_data_file_path, get_render_file_path
@@ -66,12 +67,11 @@ class UI(App):
         ansi_color = c.get("ansi_color", False)
         super().__init__(ansi_color=ansi_color)
 
-        # Set title to show room identifier
+        # Set title and sub_title for display
         identifier = c.get("identifier", "")
+        self.title = "Elva"
         if identifier:
-            self.title = f"Elva - {identifier}"
-        else:
-            self.title = "Elva"
+            self.sub_title = identifier
 
         # document structure
         self.ydoc = Doc()
@@ -251,6 +251,7 @@ class UI(App):
             id="editor",
             language=self.language,
         )
+        yield Footer()
 
     @property
     def language(self) -> str:
