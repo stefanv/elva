@@ -603,13 +603,13 @@ safe_option = click.option(
 """A CLI command decorator defining a flag for safe or unsafe connections."""
 
 identifier_option = click.option(
+    "--room",
     "--identifier",
     "-i",
     "identifier",
-    help="Unique identifier of the shared document.",
-    default=str(uuid.uuid4()),
+    help="Room name to join (will prompt if not specified).",
 )
-"""A CLI command decorator defining an option for the YDoc identifier."""
+"""A CLI command decorator defining an option for the room/YDoc identifier."""
 
 render_auto_save_option = click.option(
     "--auto-save/--no-auto-save",
