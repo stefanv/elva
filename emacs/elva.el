@@ -7,7 +7,13 @@
 ;; (elva-bridge.py) that handles Yjs protocol communication.
 ;;
 ;; Usage:
-;;   M-x elva-connect RET ws://localhost:7654/my-room-id RET
+;;   M-x elva-connect RET my-room-id RET
+;;
+;; URL formats accepted:
+;;   my-room-id                 -> ws://localhost:7654/my-room-id
+;;   myhost/my-room-id          -> ws://myhost:7654/my-room-id
+;;   myhost:8000/my-room-id     -> ws://myhost:8000/my-room-id
+;;   ws://myhost:8000/my-room   -> ws://myhost:8000/my-room
 ;;
 ;; Requirements:
 ;;   - Python 3.8+
@@ -70,8 +76,42 @@ Set to 0 to disable automatic reconnection."
   :type 'integer
   :group 'elva)
 
+(defcustom elva-default-host "localhost"
+  "Default host for Elva server connections."
+  :type 'string
+  :group 'elva)
+
 (defvar-local elva--url nil
   "The URL this buffer is connected to.")
+
+(defun elva--normalize-url (input)
+  "Normalize INPUT into a full WebSocket URL.
+Accepts various formats:
+  room-id                    -> ws://localhost:7654/room-id
+  host/room-id               -> ws://host:7654/room-id
+  host:port/room-id          -> ws://host:port/room-id
+  ws://host:port/room-id     -> ws://host:port/room-id"
+  (let ((url input))
+    ;; Strip ws:// or wss:// prefix if present
+    (when (string-match "^wss?://" url)
+      (setq url (replace-match "" nil nil url)))
+    ;; Now parse what's left: [host[:port]]/room-id or just room-id
+    (cond
+     ;; Has a slash - could be host/room or host:port/room
+     ((string-match "^\\([^/:]+\\)\\(:[0-9]+\\)?/\\(.+\\)$" url)
+      (let ((host (match-string 1 url))
+            (port (match-string 2 url))
+            (room (match-string 3 url)))
+        (format "ws://%s%s/%s"
+                host
+                (or port (format ":%d" elva-default-port))
+                room)))
+     ;; No slash - assume it's just a room ID
+     ((not (string-match "/" url))
+      (format "ws://%s:%d/%s" elva-default-host elva-default-port url))
+     ;; Fallback - return as-is with ws:// prefix
+     (t
+      (concat "ws://" url)))))
 
 (defvar-local elva--reconnect-count 0
   "Number of reconnection attempts made.")
@@ -80,15 +120,20 @@ Set to 0 to disable automatic reconnection."
   "Timer for reconnection attempts.")
 
 (defun elva-connect (url)
-  "Connect current buffer to Elva server at URL."
+  "Connect current buffer to Elva server at URL.
+URL can be in various formats:
+  room-id                    -> ws://localhost:7654/room-id
+  host/room-id               -> ws://host:7654/room-id
+  host:port/room-id          -> ws://host:port/room-id
+  ws://host:port/room-id     -> ws://host:port/room-id"
   (interactive
-   (list (read-string
-          (format "Elva URL (e.g., ws://localhost:%d/room-id): " elva-default-port))))
+   (list (read-string "Elva (room-id or host:port/room-id): ")))
   (when elva--process
     (error "Already connected.  Use `elva-disconnect' first"))
-  (setq elva--url url)
-  (setq elva--reconnect-count 0)
-  (elva--do-connect url))
+  (let ((full-url (elva--normalize-url url)))
+    (setq elva--url full-url)
+    (setq elva--reconnect-count 0)
+    (elva--do-connect full-url)))
 
 (defun elva--do-connect (url)
   "Internal function to establish connection to URL."

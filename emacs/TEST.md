@@ -19,8 +19,11 @@
 ;; Set Python to use the venv (required for pycrdt/websockets)
 (setq elva-bridge-program "~/src/elva/.venv/bin/python3")
 
-;; Connect a buffer (default port is 7654)
-M-x elva-connect RET ws://localhost:7654/your-room-id RET
+;; Connect a buffer (default host:port is localhost:7654)
+M-x elva-connect RET your-room-id RET
+
+;; Or with explicit host/port:
+M-x elva-connect RET localhost:7654/your-room-id RET
 ```
 
 ## Test with Elva Editor (second client)
