@@ -218,7 +218,7 @@ Adjusts point appropriately when edits occur before the cursor."
           ;; No more attempts or reconnection disabled
           (if elva--url
               (message "Elva: connection lost after %d attempts" elva--reconnect-count)
-            (message "Elva: disconnected"))))))
+            (message "Elva: disconnected")))))))
 
 (defun elva--try-reconnect (buffer)
   "Attempt to reconnect BUFFER to Elva."
