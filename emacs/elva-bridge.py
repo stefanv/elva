@@ -92,6 +92,7 @@ class ElvaBridge:
         self.text = self.doc.get("ytext", type=Text)
         self._applying_from_server = False  # Block echo to Emacs
         self._applying_from_emacs = False   # Block echo to Emacs (but send to server)
+        self._initial_sync_done = False     # Track initial sync completion
         self._ws = None
         self._send_queue = asyncio.Queue()
 
@@ -228,6 +229,17 @@ class ElvaBridge:
                     self._log(f"applied update ({len(payload)} bytes)")
                 finally:
                     self._applying_from_server = False
+
+            # After first sync, notify Emacs of initial room content
+            if not self._initial_sync_done:
+                self._initial_sync_done = True
+                content = str(self.text)
+                self._send_to_emacs({
+                    "op": "sync_complete",
+                    "length": len(content),
+                    "content": content
+                })
+                self._log(f"initial sync complete, room has {len(content)} chars")
 
         elif msg_type == (AWARENESS,):
             # Awareness update - ignore for now
