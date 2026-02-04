@@ -51,9 +51,10 @@ class UI(App):
     """The installed screens."""
 
     BINDINGS = [
-        Binding("ctrl+b", "toggle_dashboard", "Toggle the dashboard"),
-        Binding("ctrl+s", "save", "Save to data file"),
-        Binding("ctrl+r", "render", "Render to file"),
+        Binding("ctrl+q", "quit", "Quit"),
+        Binding("ctrl+b", "toggle_dashboard", "Dashboard"),
+        Binding("ctrl+s", "save", "Save"),
+        Binding("ctrl+r", "render", "Render"),
     ]
     """Key bindings for actions of the app."""
 
@@ -68,9 +69,16 @@ class UI(App):
         super().__init__(ansi_color=ansi_color)
 
         # Set title and sub_title for display
-        identifier = c.get("identifier", "")
         self.title = "Elva"
-        if identifier:
+        host = c.get("host")
+        port = c.get("port")
+        identifier = c.get("identifier", "")
+        if host and identifier:
+            if port:
+                self.sub_title = f"{host}:{port}/{identifier}"
+            else:
+                self.sub_title = f"{host}/{identifier}"
+        elif identifier:
             self.sub_title = identifier
 
         # document structure
