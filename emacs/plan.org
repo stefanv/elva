@@ -69,13 +69,17 @@ The cleaner solution: use pycrdt as a subprocess that speaks native Yjs protocol
 - [X] Handle room creation/joining
 - [X] Verified bidirectional sync: Emacs ↔ Elva editor
 
-** TODO Phase 4: Robustness
+** DONE Phase 4: Robustness
 - [X] Multi-byte character handling (UTF-8 positions vs byte positions)
   - pycrdt uses UTF-8 byte positions, Emacs uses character positions
   - Bridge converts between them in both directions
-- [ ] Cursor position preservation during remote edits
-- [ ] Batch rapid local changes to reduce traffic
-- [ ] Handle network latency gracefully
+- [X] Cursor position preservation during remote edits
+  - Point adjusts when edits happen before cursor
+- [X] Batch rapid local changes to reduce traffic
+  - Configurable delay (elva-batch-delay, default 50ms)
+- [X] Handle network latency gracefully
+  - Automatic reconnection with configurable attempts
+  - Connection status tracking
 
 ** TODO Phase 5: Features
 - [ ] Awareness protocol (show other users' cursors)

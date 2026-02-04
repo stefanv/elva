@@ -17,6 +17,7 @@
 ;;; Code:
 
 (require 'json)
+(require 'cl-lib)
 
 (defgroup elva nil
   "Collaborative editing via Elva/Yjs."
@@ -41,11 +42,49 @@
 (defvar-local elva--applying-remote nil
   "Non-nil when applying remote changes (to prevent echo).")
 
+(defvar-local elva--pending-changes nil
+  "List of pending changes to send, in reverse order.")
+
+(defvar-local elva--batch-timer nil
+  "Timer for batching rapid changes.")
+
+(defcustom elva-batch-delay 0.05
+  "Delay in seconds before sending batched changes.
+Set to 0 to disable batching and send changes immediately."
+  :type 'number
+  :group 'elva)
+
+(defcustom elva-reconnect-delay 2.0
+  "Delay in seconds before attempting to reconnect."
+  :type 'number
+  :group 'elva)
+
+(defcustom elva-max-reconnect-attempts 5
+  "Maximum number of reconnection attempts.
+Set to 0 to disable automatic reconnection."
+  :type 'integer
+  :group 'elva)
+
+(defvar-local elva--url nil
+  "The URL this buffer is connected to.")
+
+(defvar-local elva--reconnect-count 0
+  "Number of reconnection attempts made.")
+
+(defvar-local elva--reconnect-timer nil
+  "Timer for reconnection attempts.")
+
 (defun elva-connect (url)
   "Connect current buffer to Elva server at URL."
   (interactive "sElva URL (e.g., ws://localhost:8000/room/test): ")
   (when elva--process
     (error "Already connected.  Use `elva-disconnect' first"))
+  (setq elva--url url)
+  (setq elva--reconnect-count 0)
+  (elva--do-connect url))
+
+(defun elva--do-connect (url)
+  "Internal function to establish connection to URL."
   (let ((buffer (current-buffer)))
     (setq elva--process
           (make-process
@@ -58,10 +97,11 @@
                      (elva--filter proc output buffer))
            :sentinel (lambda (proc event)
                        (elva--sentinel proc event buffer)))))
-  ;; Send initial buffer content
-  (let ((content (buffer-string)))
-    (when (> (length content) 0)
-      (elva--send `((op . "insert") (pos . 0) (text . ,content)))))
+  ;; Send initial buffer content (only on first connect, not reconnect)
+  (when (zerop elva--reconnect-count)
+    (let ((content (buffer-string)))
+      (when (> (length content) 0)
+        (elva--send `((op . "insert") (pos . 0) (text . ,content))))))
   ;; Watch for local changes
   (add-hook 'after-change-functions #'elva--after-change nil t)
   (message "Connected to Elva: %s" url))
@@ -72,15 +112,44 @@ OLD-LEN is the length of the replaced text."
   (unless elva--applying-remote
     ;; Handle deletion
     (when (> old-len 0)
-      (elva--send `((op . "delete")
-                    (pos . ,(1- beg))      ; Convert to 0-indexed
-                    (count . ,old-len))))
+      (elva--queue-change `((op . "delete")
+                            (pos . ,(1- beg))      ; Convert to 0-indexed
+                            (count . ,old-len))))
     ;; Handle insertion
     (when (> end beg)
       (let ((text (buffer-substring-no-properties beg end)))
-        (elva--send `((op . "insert")
-                      (pos . ,(1- beg))    ; Convert to 0-indexed
-                      (text . ,text)))))))
+        (elva--queue-change `((op . "insert")
+                              (pos . ,(1- beg))    ; Convert to 0-indexed
+                              (text . ,text)))))))
+
+(defun elva--queue-change (change)
+  "Queue CHANGE to be sent, batching rapid changes together."
+  (push change elva--pending-changes)
+  (if (zerop elva-batch-delay)
+      ;; No batching - send immediately
+      (elva--flush-changes)
+    ;; Cancel existing timer and start a new one
+    (when elva--batch-timer
+      (cancel-timer elva--batch-timer))
+    (setq elva--batch-timer
+          (run-at-time elva-batch-delay nil
+                       #'elva--flush-changes-in-buffer
+                       (current-buffer)))))
+
+(defun elva--flush-changes-in-buffer (buffer)
+  "Flush pending changes in BUFFER."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (elva--flush-changes))))
+
+(defun elva--flush-changes ()
+  "Send all pending changes to the bridge."
+  (setq elva--batch-timer nil)
+  (when elva--pending-changes
+    ;; Send changes in order (they were pushed in reverse)
+    (dolist (change (nreverse elva--pending-changes))
+      (elva--send change))
+    (setq elva--pending-changes nil)))
 
 (defun elva--send (msg)
   "Send MSG as JSON to the bridge process."
@@ -99,36 +168,90 @@ OLD-LEN is the length of the replaced text."
         (error (message "Elva: error parsing message: %s" err))))))
 
 (defun elva--apply-remote (msg buffer)
-  "Apply remote change MSG to BUFFER."
+  "Apply remote change MSG to BUFFER.
+Adjusts point appropriately when edits occur before the cursor."
   (with-current-buffer buffer
     (let ((elva--applying-remote t)
-          (inhibit-modification-hooks t))
-      (save-excursion
-        (pcase (alist-get 'op msg)
-          ("insert"
-           (let ((pos (1+ (alist-get 'pos msg)))  ; Convert to 1-indexed
-                 (text (alist-get 'text msg)))
+          (inhibit-modification-hooks t)
+          (old-point (point)))
+      (pcase (alist-get 'op msg)
+        ("insert"
+         (let ((pos (1+ (alist-get 'pos msg)))  ; Convert to 1-indexed
+               (text (alist-get 'text msg)))
+           (save-excursion
              (goto-char pos)
-             (insert text)))
-          ("delete"
-           (let ((pos (1+ (alist-get 'pos msg)))  ; Convert to 1-indexed
-                 (count (alist-get 'count msg)))
+             (insert text))
+           ;; Adjust point if insert was before cursor
+           (when (< pos old-point)
+             (goto-char (+ old-point (length text))))))
+        ("delete"
+         (let ((pos (1+ (alist-get 'pos msg)))  ; Convert to 1-indexed
+               (count (alist-get 'count msg)))
+           (save-excursion
              (goto-char pos)
-             (delete-char count))))))))
+             (delete-char count))
+           ;; Adjust point if delete was before cursor
+           (when (< pos old-point)
+             (goto-char (max pos (- old-point count))))))))))
 
 (defun elva--sentinel (proc event buffer)
   "Handle process PROC state change EVENT for BUFFER."
   (let ((status (string-trim event)))
-    (message "Elva bridge: %s" status)
     (when (and (buffer-live-p buffer)
                (not (process-live-p proc)))
       (with-current-buffer buffer
         (setq elva--process nil)
-        (remove-hook 'after-change-functions #'elva--after-change t)))))
+        (remove-hook 'after-change-functions #'elva--after-change t)
+        ;; Attempt reconnection if enabled and not manually disconnected
+        (if (and elva--url
+                 (> elva-max-reconnect-attempts 0)
+                 (< elva--reconnect-count elva-max-reconnect-attempts))
+            (progn
+              (cl-incf elva--reconnect-count)
+              (message "Elva: connection lost. Reconnecting in %.1fs... (attempt %d/%d)"
+                       elva-reconnect-delay
+                       elva--reconnect-count
+                       elva-max-reconnect-attempts)
+              (setq elva--reconnect-timer
+                    (run-at-time elva-reconnect-delay nil
+                                 #'elva--try-reconnect buffer)))
+          ;; No more attempts or reconnection disabled
+          (if elva--url
+              (message "Elva: connection lost after %d attempts" elva--reconnect-count)
+            (message "Elva: disconnected"))))))
+
+(defun elva--try-reconnect (buffer)
+  "Attempt to reconnect BUFFER to Elva."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (setq elva--reconnect-timer nil)
+      (condition-case err
+          (elva--do-connect elva--url)
+        (error
+         (message "Elva: reconnection failed: %s" err)
+         ;; Schedule another attempt if we have retries left
+         (when (< elva--reconnect-count elva-max-reconnect-attempts)
+           (cl-incf elva--reconnect-count)
+           (setq elva--reconnect-timer
+                 (run-at-time elva-reconnect-delay nil
+                              #'elva--try-reconnect buffer))))))))
 
 (defun elva-disconnect ()
   "Disconnect current buffer from Elva."
   (interactive)
+  ;; Clear URL to prevent reconnection
+  (setq elva--url nil)
+  ;; Cancel reconnection timer
+  (when elva--reconnect-timer
+    (cancel-timer elva--reconnect-timer)
+    (setq elva--reconnect-timer nil))
+  ;; Flush any pending changes before disconnecting
+  (elva--flush-changes)
+  ;; Cancel batch timer
+  (when elva--batch-timer
+    (cancel-timer elva--batch-timer)
+    (setq elva--batch-timer nil))
+  ;; Kill the process
   (when elva--process
     (delete-process elva--process)
     (setq elva--process nil))
@@ -138,9 +261,16 @@ OLD-LEN is the length of the replaced text."
 (defun elva-status ()
   "Show connection status for current buffer."
   (interactive)
-  (if (and elva--process (process-live-p elva--process))
-      (message "Elva: connected")
-    (message "Elva: not connected")))
+  (cond
+   ((and elva--process (process-live-p elva--process))
+    (message "Elva: connected to %s" elva--url))
+   (elva--reconnect-timer
+    (message "Elva: reconnecting to %s (attempt %d/%d)"
+             elva--url elva--reconnect-count elva-max-reconnect-attempts))
+   (elva--url
+    (message "Elva: disconnected from %s" elva--url))
+   (t
+    (message "Elva: not connected"))))
 
 (provide 'elva)
 ;;; elva.el ends here
