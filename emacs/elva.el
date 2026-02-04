@@ -156,14 +156,11 @@ Accepts various formats (room IDs must be 10-250 chars):
   "Return a string for the modeline showing Elva connection status."
   (cond
    ((and elva--room-id elva--process (process-live-p elva--process))
-    (propertize (format " Elva[%s]" elva--room-id)
-                'face 'success))
+    (format " Elva[%s]" elva--room-id))
    (elva--room-id
-    (propertize (format " Elva[%s:offline]" elva--room-id)
-                'face 'warning))
+    (format " Elva[%s|OFFLINE]" elva--room-id))
    (elva--reconnect-timer
-    (propertize " Elva[reconnecting...]"
-                'face 'warning))))
+    " Elva[reconnecting...]")))
 
 ;; Add to modeline
 (add-to-list 'mode-line-misc-info
