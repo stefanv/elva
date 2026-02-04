@@ -566,12 +566,17 @@ class WebsocketServer(Component):
         identifier = websocket.request.path[1:]
         room = await self.get_room(identifier)
 
+        # Get client IP for logging
+        remote = websocket.remote_address
+        client_ip = remote[0] if remote else "unknown"
+
         room.add(websocket)
+        self.log.info(f"client {client_ip} joined room '{identifier}'")
 
         try:
             async for data in websocket:
                 await room.process(data, websocket)
         except ConnectionClosed:
-            self.log.info(f"closed connection {id(websocket)}")
+            self.log.info(f"client {client_ip} left room '{identifier}'")
         finally:
             room.remove(websocket)
