@@ -305,7 +305,12 @@ class ElvaBridge:
         self.doc.observe(self._on_doc_update)
 
         try:
-            async with websockets.connect(self.url) as ws:
+            # ping_interval sends pings to detect dead connections
+            async with websockets.connect(
+                self.url,
+                ping_interval=20,
+                ping_timeout=10,
+            ) as ws:
                 self._ws = ws
                 self._log("connected")
 
