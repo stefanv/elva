@@ -15,7 +15,7 @@ from click.core import ParameterSource
 from deepmerge import always_merger
 
 from elva.auth import Password
-from elva.core import APP_NAME, CONFIG_NAME, DEFAULT_PORT, FILE_SUFFIX, LOG_SUFFIX
+from elva.core import APP_NAME, CONFIG_NAME, DEFAULT_HOST, DEFAULT_PORT, FILE_SUFFIX, LOG_SUFFIX
 from elva.store import get_metadata
 
 #
@@ -579,7 +579,8 @@ host_option = click.option(
     "-h",
     "host",
     metavar="ADDRESS",
-    help="Host of the syncing server.",
+    default=DEFAULT_HOST,
+    help=f"Host of the syncing server (default: {DEFAULT_HOST}).",
 )
 """A CLI command decorator defining an option for the host to connect to."""
 

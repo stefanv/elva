@@ -19,7 +19,7 @@ from elva.cli import (
     file_paths_option_and_argument,
     pass_config,
 )
-from elva.core import APP_NAME, DEFAULT_PORT, ELVA_APP_DIR_NAME, get_app_import_path
+from elva.core import APP_NAME, DEFAULT_HOST, DEFAULT_PORT, ELVA_APP_DIR_NAME, get_app_import_path
 
 
 @click.group()
@@ -69,8 +69,8 @@ def context(config: dict, *args: tuple, **kwargs: dict):
     "--host",
     "-h",
     "host",
-    default="localhost",
-    help="Host of the server to query.",
+    default=DEFAULT_HOST,
+    help=f"Host of the server to query (default: {DEFAULT_HOST}).",
 )
 @click.option(
     "--port",
