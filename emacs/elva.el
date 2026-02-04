@@ -199,11 +199,12 @@ URL can be in various formats (room IDs must be 10-250 chars):
   my-room-0001              -> ws://localhost:7654/my-room-0001
   host/my-room-0001         -> ws://host:7654/my-room-0001
   host:port/my-room-0001    -> ws://host:port/my-room-0001
-  ws://host:port/my-project  -> ws://host:port/my-project"
+  ws://host:port/my-project  -> ws://host:port/my-project
+
+Completion offers rooms from the default server if available."
   (interactive
    (let ((rooms (elva--fetch-rooms)))
-     (list (completing-read "Elva room: " rooms nil nil nil nil
-                            (car rooms)))))
+     (list (completing-read "Elva room: " rooms nil nil))))
   (let* ((full-url (elva--normalize-url url))
          (room-id (elva--extract-room-id full-url))
          (buf-name (format "*elva:%s*" room-id))
