@@ -9,8 +9,11 @@
 ## In Emacs
 
 ```elisp
-;; Load the package
-(load-file "/home/stefan/src/elva/emacs/elva.el")
+;; Load the package (adjust path as needed)
+(load-file "~/src/elva/emacs/elva.el")
+
+;; Set Python to use the venv (required for pycrdt/websockets)
+(setq elva-bridge-program "~/src/elva/.venv/bin/python3")
 
 ;; Connect a buffer
 M-x elva-connect RET ws://localhost:46795/your-room-id RET
