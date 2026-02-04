@@ -408,9 +408,8 @@ Adjusts point appropriately when edits occur before the cursor."
 (defun elva-disconnect ()
   "Disconnect current buffer from Elva."
   (interactive)
-  ;; Clear URL to prevent reconnection
+  ;; Clear URL to prevent reconnection (but keep room-id for modeline)
   (setq elva--url nil)
-  (setq elva--room-id nil)
   ;; Cancel reconnection timer
   (when elva--reconnect-timer
     (cancel-timer elva--reconnect-timer)
