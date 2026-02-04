@@ -24,6 +24,7 @@
 
 (require 'json)
 (require 'cl-lib)
+(require 'url)
 
 (defgroup elva nil
   "Collaborative editing via Elva/Yjs."
@@ -172,6 +173,25 @@ Accepts various formats (room IDs must be 10-250 chars):
 (add-to-list 'mode-line-misc-info
              '(:eval (elva--modeline-string)))
 
+(defun elva--fetch-rooms (&optional host port)
+  "Fetch list of room identifiers from server.
+Uses HOST and PORT, defaulting to `elva-default-host' and `elva-default-port'."
+  (let* ((host (or host elva-default-host))
+         (port (or port elva-default-port))
+         (url (format "http://%s:%d/rooms" host port)))
+    (condition-case err
+        (with-current-buffer (url-retrieve-synchronously url t t 5)
+          (goto-char (point-min))
+          (re-search-forward "\n\n")
+          (let* ((json-object-type 'alist)
+                 (json-array-type 'list)
+                 (data (json-read))
+                 (rooms (alist-get 'rooms data)))
+            (mapcar (lambda (r) (alist-get 'identifier r)) rooms)))
+      (error
+       (message "Elva: could not fetch rooms: %s" (error-message-string err))
+       nil))))
+
 (defun elva-connect (url)
   "Connect to Elva room and open it in a new buffer.
 Creates a new buffer named after the room ID and displays the room contents.
@@ -181,7 +201,9 @@ URL can be in various formats (room IDs must be 10-250 chars):
   host:port/my-room-0001    -> ws://host:port/my-room-0001
   ws://host:port/my-project  -> ws://host:port/my-project"
   (interactive
-   (list (read-string "Elva room (10+ chars, e.g. my-room-0001): ")))
+   (let ((rooms (elva--fetch-rooms)))
+     (list (completing-read "Elva room: " rooms nil nil nil nil
+                            (car rooms)))))
   (let* ((full-url (elva--normalize-url url))
          (room-id (elva--extract-room-id full-url))
          (buf-name (format "*elva:%s*" room-id))
