@@ -89,7 +89,8 @@ Set to 0 to disable automatic reconnection."
 
 (defvar-local elva--push-buffer-on-sync nil
   "If non-nil, push buffer content to room after sync completes.
-Used by `elva-room-from-buffer' to send buffer only if room is empty.")
+Used by `elva-room-from-buffer' to send buffer only if room is empty.
+Values: nil, `if-empty' (push only if room empty), `always' (reconnect).")
 
 (defun elva--validate-room-id (room-id)
   "Validate ROOM-ID and return an error message or nil if valid.
@@ -153,10 +154,16 @@ Accepts various formats (room IDs must be 10-250 chars):
 
 (defun elva--modeline-string ()
   "Return a string for the modeline showing Elva connection status."
-  (when elva--room-id
-    (if (and elva--process (process-live-p elva--process))
-        (format " Elva[%s]" elva--room-id)
-      (format " Elva[%s:disconnected]" elva--room-id))))
+  (cond
+   ((and elva--room-id elva--process (process-live-p elva--process))
+    (propertize (format " Elva[%s]" elva--room-id)
+                'face 'success))
+   (elva--room-id
+    (propertize (format " Elva[%s:offline]" elva--room-id)
+                'face 'warning))
+   (elva--reconnect-timer
+    (propertize " Elva[reconnecting...]"
+                'face 'warning))))
 
 ;; Add to modeline
 (add-to-list 'mode-line-misc-info
@@ -205,7 +212,7 @@ URL can be in various formats (room IDs must be 10-250 chars)."
     (setq elva--url full-url)
     (setq elva--room-id room-id)
     (setq elva--reconnect-count 0)
-    (setq elva--push-buffer-on-sync t)  ; Will push after sync if room is empty
+    (setq elva--push-buffer-on-sync 'if-empty)  ; Will push after sync if room is empty
     (elva--do-connect full-url nil)
     (message "Elva: connecting, will push buffer if room is empty...")))
 
@@ -323,10 +330,22 @@ Adjusts point appropriately when edits occur before the cursor."
              (goto-char (max pos (- old-point count))))))
         ("sync_complete"
          (let ((room-length (alist-get 'length msg))
-               (content (alist-get 'content msg)))
-           ;; If we want to push our buffer but room has content, error
-           (when elva--push-buffer-on-sync
-             (setq elva--push-buffer-on-sync nil)
+               (content (alist-get 'content msg))
+               (push-mode elva--push-buffer-on-sync))
+           (setq elva--push-buffer-on-sync nil)
+           (cond
+            ;; Reconnect mode: push our content if room is empty
+            ((eq push-mode 'always)
+             (if (> room-length 0)
+                 ;; Room has content from another client, use it
+                 (message "Elva: reconnected, room has content from other clients")
+               ;; Room is empty, restore our buffer content
+               (let ((buf-content (buffer-string)))
+                 (when (> (length buf-content) 0)
+                   (elva--send `((op . "insert") (pos . 0) (text . ,buf-content)))
+                   (message "Elva: reconnected and restored buffer to room")))))
+            ;; elva-room-from-buffer mode: fail if room has content
+            ((eq push-mode 'if-empty)
              (if (> room-length 0)
                  (progn
                    (message "Elva: room already has content (%d chars), not overwriting" room-length)
@@ -336,6 +355,7 @@ Adjusts point appropriately when edits occur before the cursor."
                  (when (> (length buf-content) 0)
                    (elva--send `((op . "insert") (pos . 0) (text . ,buf-content)))
                    (message "Elva: pushed buffer to room")))))))
+           (force-mode-line-update)))
         ("error"
          (let ((error-msg (alist-get 'message msg)))
            (message "Elva error: %s" error-msg)))))))
@@ -348,6 +368,7 @@ Adjusts point appropriately when edits occur before the cursor."
       (with-current-buffer buffer
         (setq elva--process nil)
         (remove-hook 'after-change-functions #'elva--after-change t)
+        (force-mode-line-update)
         ;; Attempt reconnection if enabled and not manually disconnected
         (if (and elva--url
                  (> elva-max-reconnect-attempts 0)
@@ -371,6 +392,8 @@ Adjusts point appropriately when edits occur before the cursor."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (setq elva--reconnect-timer nil)
+      ;; On reconnect, push our buffer content if room is empty
+      (setq elva--push-buffer-on-sync 'always)
       (condition-case err
           (elva--do-connect elva--url)
         (error
