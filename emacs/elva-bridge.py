@@ -86,7 +86,9 @@ class ElvaBridge:
     """Bridge between Emacs (via stdio) and Elva (via WebSocket)."""
 
     def __init__(self, url: str):
-        self.url = url
+        # Append client identifier to URL
+        separator = "&" if "?" in url else "?"
+        self.url = f"{url}{separator}client=emacs"
         self.doc = Doc()
         # Use "ytext" to match Elva's editor client
         self.text = self.doc.get("ytext", type=Text)
