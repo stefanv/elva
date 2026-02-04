@@ -1,5 +1,14 @@
+Screen {
+  layout: vertical;
+}
+
 YTextArea {
   background: transparent;
+  height: 1fr;
+}
+
+Footer {
+  dock: bottom;
 }
 
 Dashboard {
