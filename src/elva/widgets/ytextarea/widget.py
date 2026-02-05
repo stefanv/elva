@@ -2,17 +2,26 @@
 Widget definition.
 """
 
-from typing import Self
+from typing import Callable, Self
 
 from pycrdt import Text, UndoManager
+from rich.segment import Segment
+from rich.style import Style
 from textual._tree_sitter import TREE_SITTER, get_language
 from textual.events import MouseDown
+from textual.strip import Strip
 from textual.widgets import TextArea
 
 from elva.parser import TextEventParser
 
 from .location import update_location
 from .selection import Selection
+
+# Colors for remote user cursors
+CURSOR_COLORS = [
+    "#ff6666", "#66ff66", "#6666ff", "#ffff66", "#ff66ff", "#66ffff",
+    "#ff9933", "#33ff99", "#9933ff", "#99ff33", "#ff3399", "#3399ff",
+]
 
 
 class YTextArea(TextArea, TextEventParser):
@@ -42,6 +51,15 @@ class YTextArea(TextArea, TextEventParser):
         """
     """Default CSS."""
 
+    _cursor_change_callback: Callable[[int], None] | None = None
+    """Callback for cursor position changes (byte position)."""
+
+    _remote_cursors: dict[int, tuple[int, str]]
+    """Mapping of client_id to (byte_position, color)."""
+
+    _cursor_color_map: dict[int, str]
+    """Mapping of client_id to assigned color."""
+
     def __init__(self, ytext: Text, *args: tuple, **kwargs: dict):
         """
         Arguments:
@@ -62,6 +80,11 @@ class YTextArea(TextArea, TextEventParser):
 
         # perform undo and redo solely on our contributions
         self.history.include_origin(self.origin)
+
+        # Initialize remote cursor tracking
+        self._remote_cursors = {}
+        self._cursor_color_map = {}
+        self._cursor_change_callback = None
 
     @classmethod
     def code_editor(cls, ytext: Text, *args: tuple, **kwargs: dict) -> Self:
@@ -455,3 +478,120 @@ class YTextArea(TextArea, TextEventParser):
 
         if center:
             self.scroll_cursor_visible(center)
+
+    def set_cursor_change_callback(self, callback: Callable[[int], None] | None):
+        """
+        Set a callback to be called when cursor position changes.
+
+        Arguments:
+            callback: function taking the cursor byte position as argument.
+        """
+        self._cursor_change_callback = callback
+
+    def _get_cursor_color(self, client_id: int) -> str:
+        """
+        Get a consistent color for a client ID.
+
+        Arguments:
+            client_id: the client identifier.
+
+        Returns:
+            a hex color string.
+        """
+        if client_id not in self._cursor_color_map:
+            idx = len(self._cursor_color_map) % len(CURSOR_COLORS)
+            self._cursor_color_map[client_id] = CURSOR_COLORS[idx]
+        return self._cursor_color_map[client_id]
+
+    def update_remote_cursors(self, cursors: dict[int, int]):
+        """
+        Update the display of remote user cursors.
+
+        Arguments:
+            cursors: mapping of client_id to cursor byte position.
+        """
+        self._remote_cursors = {}
+        for client_id, byte_pos in cursors.items():
+            color = self._get_cursor_color(client_id)
+            self._remote_cursors[client_id] = (byte_pos, color)
+        # Clear the line cache to force re-render with new cursor positions
+        self._line_cache.clear()
+        # Refresh all lines in the document
+        self.refresh_lines(0, self.document.line_count)
+
+    def _watch_selection(self, selection: Selection):
+        """
+        Hook called when selection changes.
+
+        Arguments:
+            selection: the new selection.
+        """
+        if self._cursor_change_callback is not None:
+            # Get cursor position (end of selection) as byte position
+            _, end = selection
+            byte_pos = self.get_binary_index_from_location(end)
+            self._cursor_change_callback(byte_pos)
+
+    def render_line(self, y: int) -> Strip:
+        """
+        Render a line with remote cursor indicators.
+
+        Arguments:
+            y: the line index (in screen coordinates).
+
+        Returns:
+            the rendered strip.
+        """
+        strip = super().render_line(y)
+
+        if not self._remote_cursors:
+            return strip
+
+        # Convert screen y to document row
+        scroll_y = self.scroll_offset.y
+        doc_row = y + scroll_y
+
+        # Collect cursor positions on this line
+        cursor_positions = []
+        for client_id, (byte_pos, color) in self._remote_cursors.items():
+            try:
+                location = self.get_location_from_binary_index(byte_pos)
+                cursor_row, cursor_col = location
+
+                if cursor_row == doc_row:
+                    # Account for gutter width and scroll
+                    gutter_width = self.gutter_width
+                    scroll_x = self.scroll_offset.x
+                    screen_col = cursor_col + gutter_width - scroll_x
+
+                    if 0 <= screen_col < strip.cell_length:
+                        cursor_positions.append((screen_col, color))
+            except (IndexError, ValueError):
+                # Skip if position is invalid
+                pass
+
+        # Apply cursor highlights by dividing and rejoining the strip
+        for screen_col, color in cursor_positions:
+            strip_len = strip.cell_length
+            if screen_col >= strip_len:
+                continue
+
+            # Divide at cursor position and cursor+1
+            end_col = min(screen_col + 1, strip_len)
+            parts = strip.divide([screen_col, end_col, strip_len])
+
+            if len(parts) >= 2:
+                # Apply background color to the cursor character
+                # We need to combine styles since apply_style doesn't override existing bgcolor
+                cursor_style = Style(bgcolor=color)
+                cursor_part = parts[1]
+                # Rebuild segments with combined style
+                new_segments = []
+                for seg in cursor_part._segments:
+                    combined_style = (seg.style or Style()) + cursor_style
+                    new_segments.append(Segment(seg.text, combined_style))
+                styled_part = Strip(new_segments)
+                # Rejoin the strip
+                strip = Strip.join([parts[0], styled_part] + parts[2:])
+
+        return strip
