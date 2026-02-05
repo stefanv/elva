@@ -9,7 +9,7 @@ translating between Yjs CRDT operations and simple position-based edits for Emac
 import asyncio
 import json
 import sys
-from pycrdt import Doc, Text
+from pycrdt import Awareness, Doc, Text
 import websockets
 
 
@@ -85,7 +85,7 @@ def decode_message(data: bytes) -> tuple[tuple[int, ...], bytes]:
 class ElvaBridge:
     """Bridge between Emacs (via stdio) and Elva (via WebSocket)."""
 
-    def __init__(self, url: str):
+    def __init__(self, url: str, user_name: str = "emacs"):
         # Append client identifier to URL
         separator = "&" if "?" in url else "?"
         self.url = f"{url}{separator}client=emacs"
@@ -97,6 +97,11 @@ class ElvaBridge:
         self._initial_sync_done = False     # Track initial sync completion
         self._ws = None
         self._send_queue = asyncio.Queue()
+
+        # Awareness for cursor/presence syncing
+        self.awareness = Awareness(self.doc)
+        self.awareness.set_local_state({"user": {"name": user_name}})
+        self._awareness_queue = asyncio.Queue()
 
     def _byte_pos_to_char_pos(self, byte_pos: int) -> int:
         """Convert UTF-8 byte position to character position."""
@@ -133,6 +138,41 @@ class ElvaBridge:
     def _log(self, msg: str):
         """Log to stderr (visible in Emacs process buffer)."""
         print(f"[bridge] {msg}", file=sys.stderr, flush=True)
+
+    def _send_awareness_to_emacs(self):
+        """Send other users' cursor positions to Emacs."""
+        my_id = self.awareness.client_id
+        users = []
+        for client_id, state in self.awareness._states.items():
+            if client_id == my_id:
+                continue
+            if state is None:
+                continue
+            user_info = state.get("user", {})
+            cursor = state.get("cursor")
+            user_data = {
+                "id": client_id,
+                "name": user_info.get("name", f"user-{client_id}"),
+                "color": user_info.get("color", "#888888"),
+            }
+            if cursor is not None:
+                # Convert byte position to char position
+                byte_pos = cursor.get("anchor", cursor.get("head", 0))
+                char_pos = self._byte_pos_to_char_pos(byte_pos)
+                user_data["cursor"] = char_pos
+            users.append(user_data)
+        self._send_to_emacs({"op": "awareness", "users": users})
+
+    def _update_local_cursor(self, char_pos: int):
+        """Update our cursor position in awareness state."""
+        byte_pos = self._char_pos_to_byte_pos(char_pos)
+        state = self.awareness.get_local_state() or {}
+        state["cursor"] = {"anchor": byte_pos, "head": byte_pos}
+        self.awareness.set_local_state(state)
+        # Queue awareness update for server
+        client_ids = [self.awareness.client_id]
+        payload = self.awareness.encode_awareness_update(client_ids)
+        self._awareness_queue.put_nowait(payload)
 
     def _on_text_change(self, event):
         """Called when Yjs text changes. Translate to Emacs operations."""
@@ -186,6 +226,10 @@ class ElvaBridge:
                         del self.text[0:len(self.text)]
                     if msg.get("text"):
                         self.text.insert(0, msg["text"])
+            elif op == "cursor":
+                # Update our cursor position for awareness
+                char_pos = msg.get("pos", 0)
+                self._update_local_cursor(char_pos)
         finally:
             self._applying_from_emacs = False
 
@@ -244,8 +288,10 @@ class ElvaBridge:
                 self._log(f"initial sync complete, room has {len(content)} chars")
 
         elif msg_type == (AWARENESS,):
-            # Awareness update - ignore for now
-            self._log("received awareness update (ignored)")
+            # Apply awareness update and notify Emacs of other users' cursors
+            self.awareness.apply_awareness_update(payload, origin="remote")
+            self._send_awareness_to_emacs()
+            self._log("received and applied awareness update")
 
         else:
             self._log(f"unknown message type: {msg_type}")
@@ -267,6 +313,15 @@ class ElvaBridge:
                 msg = encode_message((SYNC, SYNC_UPDATE), bytes(update))
                 await self._ws.send(msg)
                 self._log(f"sent update ({len(update)} bytes)")
+
+    async def _awareness_sender(self):
+        """Send queued awareness updates to WebSocket."""
+        while True:
+            payload = await self._awareness_queue.get()
+            if self._ws:
+                msg = encode_message((AWARENESS,), bytes(payload))
+                await self._ws.send(msg)
+                self._log("sent awareness update")
 
     async def _ws_receiver(self):
         """Receive messages from WebSocket."""
@@ -324,10 +379,18 @@ class ElvaBridge:
                     await ws.send(msg)
                     self._log("sent proactive sync step 2")
 
+                # Send initial awareness
+                client_ids = [self.awareness.client_id]
+                payload = self.awareness.encode_awareness_update(client_ids)
+                msg = encode_message((AWARENESS,), bytes(payload))
+                await ws.send(msg)
+                self._log("sent initial awareness")
+
                 # Run all tasks concurrently
                 await asyncio.gather(
                     self._ws_receiver(),
                     self._ws_sender(),
+                    self._awareness_sender(),
                     self._stdin_reader(),
                 )
         except websockets.exceptions.InvalidStatus as e:
