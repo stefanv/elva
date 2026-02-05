@@ -276,6 +276,8 @@ class YTextArea(TextArea, TextEventParser):
             return
 
         self.replace(insert, start, end)
+        # Notify cursor change after typing
+        self._notify_cursor_change()
 
     def _delete_via_keyboard(self, start: tuple, end: tuple):
         """
@@ -325,6 +327,10 @@ class YTextArea(TextArea, TextEventParser):
 
         self._build_highlight_map()
         self.post_message(self.Changed(self))
+
+        # Update cursor position for awareness (selection watch may not trigger
+        # if selection value didn't change)
+        self._notify_cursor_change()
 
     def _edit(
         self, text: str, top: tuple, bottom: tuple
@@ -519,6 +525,16 @@ class YTextArea(TextArea, TextEventParser):
         # Refresh all lines in the document
         self.refresh_lines(0, self.document.line_count)
 
+    def _notify_cursor_change(self):
+        """
+        Notify the cursor change callback of the current cursor position.
+        """
+        if self._cursor_change_callback is not None:
+            # Get cursor position (end of selection) as byte position
+            _, end = self.selection
+            byte_pos = self.get_binary_index_from_location(end)
+            self._cursor_change_callback(byte_pos)
+
     def _watch_selection(self, selection: Selection):
         """
         Hook called when selection changes.
@@ -526,11 +542,7 @@ class YTextArea(TextArea, TextEventParser):
         Arguments:
             selection: the new selection.
         """
-        if self._cursor_change_callback is not None:
-            # Get cursor position (end of selection) as byte position
-            _, end = selection
-            byte_pos = self.get_binary_index_from_location(end)
-            self._cursor_change_callback(byte_pos)
+        self._notify_cursor_change()
 
     def render_line(self, y: int) -> Strip:
         """
