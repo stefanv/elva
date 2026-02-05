@@ -96,6 +96,20 @@ Values: nil, `if-empty' (push only if room empty), `always' (reconnect).")
 (defvar-local elva--saved-content nil
   "Saved buffer content for restoration during reconnection.")
 
+(defvar-local elva--remote-cursors nil
+  "Alist of (client-id . overlay) for remote user cursors.")
+
+(defvar-local elva--cursor-idle-timer nil
+  "Timer for sending cursor position updates.")
+
+(defvar elva-cursor-colors
+  '("#ff6666" "#66ff66" "#6666ff" "#ffff66" "#ff66ff" "#66ffff"
+    "#ff9933" "#33ff99" "#9933ff" "#99ff33" "#ff3399" "#3399ff")
+  "Colors for remote user cursors, assigned by client ID.")
+
+(defvar-local elva--cursor-color-map nil
+  "Alist mapping client IDs to colors.")
+
 (defun elva--validate-room-id (room-id)
   "Validate ROOM-ID and return an error message or nil if valid.
 Room IDs must be 10-250 characters, containing only letters, numbers,
@@ -266,8 +280,17 @@ If SEND-BUFFER-CONTENT is non-nil, send current buffer content to room."
         (elva--send `((op . "insert") (pos . 0) (text . ,content))))))
   ;; Watch for local changes
   (add-hook 'after-change-functions #'elva--after-change nil t)
+  ;; Watch for cursor movement to send awareness updates
+  (add-hook 'post-command-hook #'elva--maybe-send-cursor nil t)
   (message "Connected to Elva: %s" url)
   (force-mode-line-update))
+
+(defun elva--maybe-send-cursor ()
+  "Send cursor position if it changed, with debouncing."
+  (when elva--cursor-idle-timer
+    (cancel-timer elva--cursor-idle-timer))
+  (setq elva--cursor-idle-timer
+        (run-with-idle-timer 0.1 nil #'elva--send-cursor-position)))
 
 (defun elva--after-change (beg end old-len)
   "Handle local buffer change between BEG and END.
@@ -326,7 +349,7 @@ OLD-LEN is the length of the replaced text."
     (dolist (line (split-string output "\n" t))
       (condition-case err
           (when (> (length line) 0)
-            (let ((msg (json-parse-string line :object-type 'alist)))
+            (let ((msg (json-parse-string line :object-type 'alist :array-type 'list)))
               (elva--apply-remote msg buffer)))
         (error (message "Elva: error parsing message: %s" err))))))
 
@@ -384,9 +407,48 @@ Adjusts point appropriately when edits occur before the cursor."
                    (elva--send `((op . "insert") (pos . 0) (text . ,buf-content)))
                    (message "Elva: pushed buffer to room"))))))
            (force-mode-line-update)))
+        ("awareness"
+         (elva--update-remote-cursors (alist-get 'users msg)))
         ("error"
          (let ((error-msg (alist-get 'message msg)))
            (message "Elva error: %s" error-msg)))))))
+
+(defun elva--get-cursor-color (client-id)
+  "Get a consistent color for CLIENT-ID."
+  (or (alist-get client-id elva--cursor-color-map)
+      (let* ((idx (mod (length elva--cursor-color-map) (length elva-cursor-colors)))
+             (color (nth idx elva-cursor-colors)))
+        (push (cons client-id color) elva--cursor-color-map)
+        color)))
+
+(defun elva--update-remote-cursors (users)
+  "Update overlays showing remote USERS' cursor positions."
+  ;; Remove all old overlays first
+  (dolist (entry elva--remote-cursors)
+    (delete-overlay (cdr entry)))
+  (setq elva--remote-cursors nil)
+  ;; Create overlays for each user with cursor position
+  (dolist (user users)
+    (let* ((id (alist-get 'id user))
+           (cursor-pos (alist-get 'cursor user))
+           (pos (1+ (or cursor-pos -1))))  ; Convert to 1-indexed
+      (when (and cursor-pos (> pos 0) (<= pos (point-max)))
+        (let* ((color (elva--get-cursor-color id))
+               (ov (make-overlay pos pos)))
+          (if (= pos (point-max))
+              ;; At end of buffer: show colored block after position
+              (overlay-put ov 'after-string
+                           (propertize " " 'face `(:background ,color)))
+            ;; Normal case: highlight the character
+            (move-overlay ov pos (1+ pos))
+            (overlay-put ov 'face `(:background ,color)))
+          (overlay-put ov 'elva-cursor t)
+          (push (cons id ov) elva--remote-cursors))))))
+
+(defun elva--send-cursor-position ()
+  "Send current cursor position to bridge for awareness."
+  (when (and elva--process (process-live-p elva--process))
+    (elva--send `((op . "cursor") (pos . ,(1- (point)))))))
 
 (defun elva--sentinel (proc event buffer)
   "Handle process PROC state change EVENT for BUFFER."
@@ -453,11 +515,20 @@ Adjusts point appropriately when edits occur before the cursor."
   (when elva--batch-timer
     (cancel-timer elva--batch-timer)
     (setq elva--batch-timer nil))
+  ;; Cancel cursor update timer
+  (when elva--cursor-idle-timer
+    (cancel-timer elva--cursor-idle-timer)
+    (setq elva--cursor-idle-timer nil))
+  ;; Remove remote cursor overlays
+  (dolist (entry elva--remote-cursors)
+    (delete-overlay (cdr entry)))
+  (setq elva--remote-cursors nil)
   ;; Kill the process
   (when elva--process
     (delete-process elva--process)
     (setq elva--process nil))
   (remove-hook 'after-change-functions #'elva--after-change t)
+  (remove-hook 'post-command-hook #'elva--maybe-send-cursor t)
   (force-mode-line-update)
   (message "Disconnected from Elva"))
 
