@@ -167,6 +167,12 @@ class YTextArea(TextArea, TextEventParser):
         start = self.get_location_from_binary_index(retain)
         end = self.get_location_from_binary_index(retain + delete)
 
+        # Adjust remote cursor positions based on the edit
+        insert_bytes = len(insert.encode("utf-8")) if insert else 0
+        delta = insert_bytes - delete
+        if delta != 0:
+            self._adjust_remote_cursors(retain, delta)
+
         # apply the update to the UI
         self._apply_update(insert, start, end)
 
@@ -538,6 +544,30 @@ class YTextArea(TextArea, TextEventParser):
         # Refresh all lines in the document
         self.refresh_lines(0, self.document.line_count)
 
+    def _adjust_remote_cursors(self, pos: int, delta: int):
+        """
+        Adjust stored remote cursor positions after an edit.
+
+        Arguments:
+            pos: the byte position where the edit occurred.
+            delta: positive for insertion length, negative for deletion length.
+        """
+        if not self._remote_cursors:
+            return
+
+        adjusted = {}
+        for client_id, (byte_pos, color) in self._remote_cursors.items():
+            if byte_pos >= pos:
+                # Cursor is at or after edit position - adjust it
+                new_pos = max(pos, byte_pos + delta)
+                adjusted[client_id] = (new_pos, color)
+            else:
+                adjusted[client_id] = (byte_pos, color)
+        self._remote_cursors = adjusted
+
+        # Clear line cache to ensure cursors are redrawn at new positions
+        self._line_cache.clear()
+
     def _notify_cursor_change(self):
         """
         Notify the cursor change callback of the current cursor position.
@@ -585,22 +615,24 @@ class YTextArea(TextArea, TextEventParser):
         if not self._remote_cursors:
             return strip
 
-        # Convert screen y to document row
-        scroll_y = self.scroll_offset.y
-        doc_row = y + scroll_y
+        # Screen row accounting for scroll
+        screen_row = y + self.scroll_offset.y
 
         # Collect cursor positions on this line
         cursor_positions = []
         for client_id, (byte_pos, color) in self._remote_cursors.items():
             try:
+                # Convert byte position to document location
                 location = self.get_location_from_binary_index(byte_pos)
-                cursor_row, cursor_col = location
 
-                if cursor_row == doc_row:
+                # Convert document location to screen offset (handles wrapping)
+                screen_offset = self.wrapped_document.location_to_offset(location)
+
+                if screen_offset.y == screen_row:
                     # Account for gutter width and scroll
                     gutter_width = self.gutter_width
                     scroll_x = self.scroll_offset.x
-                    screen_col = cursor_col + gutter_width - scroll_x
+                    screen_col = screen_offset.x + gutter_width - scroll_x
 
                     if 0 <= screen_col < strip.cell_length:
                         cursor_positions.append((screen_col, color))

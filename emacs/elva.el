@@ -372,25 +372,29 @@ Adjusts point appropriately when edits occur before the cursor."
       (pcase (alist-get 'op msg)
         ("insert"
          (let ((pos (1+ (alist-get 'pos msg)))  ; Convert to 1-indexed
-               (text (alist-get 'text msg)))
+               (text (alist-get 'text msg))
+               (pos0 (alist-get 'pos msg)))     ; 0-indexed for cursor adjustment
            (save-excursion
              (goto-char pos)
              (insert text))
            ;; Adjust point if insert was before cursor
            (when (< pos old-point)
              (goto-char (+ old-point (length text))))
-           ;; Redraw cursors to prevent stretching
+           ;; Adjust stored cursor positions and redraw
+           (elva--adjust-cursor-positions pos0 (length text))
            (elva--redraw-remote-cursors)))
         ("delete"
          (let ((pos (1+ (alist-get 'pos msg)))  ; Convert to 1-indexed
-               (count (alist-get 'count msg)))
+               (count (alist-get 'count msg))
+               (pos0 (alist-get 'pos msg)))     ; 0-indexed for cursor adjustment
            (save-excursion
              (goto-char pos)
              (delete-char count))
            ;; Adjust point if delete was before cursor
            (when (< pos old-point)
              (goto-char (max pos (- old-point count))))
-           ;; Redraw cursors after text change
+           ;; Adjust stored cursor positions and redraw
+           (elva--adjust-cursor-positions pos0 (- count))
            (elva--redraw-remote-cursors)))
         ("sync_complete"
          (let ((room-length (alist-get 'length msg))
@@ -443,6 +447,21 @@ Adjusts point appropriately when edits occur before the cursor."
              (color (nth idx elva-cursor-colors)))
         (push (cons client-id color) elva--cursor-color-map)
         color)))
+
+(defun elva--adjust-cursor-positions (pos delta)
+  "Adjust stored cursor positions after an edit at POS.
+DELTA is positive for insertions, negative for deletions.
+Positions are 0-indexed (as stored in cursor data)."
+  (setq elva--remote-cursor-data
+        (mapcar (lambda (user)
+                  (let ((cursor-pos (alist-get 'cursor user)))
+                    (if (and cursor-pos (>= cursor-pos pos))
+                        ;; Cursor is at or after edit position - adjust it
+                        (let ((new-pos (max pos (+ cursor-pos delta))))
+                          (cons (cons 'cursor new-pos)
+                                (assq-delete-all 'cursor user)))
+                      user)))
+                elva--remote-cursor-data)))
 
 (defun elva--redraw-remote-cursors ()
   "Redraw remote cursor overlays from stored data."
