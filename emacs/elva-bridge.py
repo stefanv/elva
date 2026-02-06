@@ -95,6 +95,7 @@ class ElvaBridge:
         self._applying_from_server = False  # Block echo to Emacs
         self._applying_from_emacs = False   # Block echo to Emacs (but send to server)
         self._initial_sync_done = False     # Track initial sync completion
+        self._pre_change_text = None        # Text before server update (for delete char count)
         self._ws = None
         self._send_queue = asyncio.Queue()
 
@@ -104,8 +105,13 @@ class ElvaBridge:
         self._awareness_queue = asyncio.Queue()
 
     def _byte_pos_to_char_pos(self, byte_pos: int) -> int:
-        """Convert UTF-8 byte position to character position."""
-        text_str = str(self.text)
+        """Convert UTF-8 byte position to character position.
+
+        Uses pre-change text if available (for operations from server),
+        otherwise uses current text.
+        """
+        # Use pre-change text if available (needed for position conversion during server updates)
+        text_str = self._pre_change_text if self._pre_change_text else str(self.text)
         text_bytes = text_str.encode("utf-8")
         # Clamp to valid range
         byte_pos = min(byte_pos, len(text_bytes))
@@ -123,8 +129,13 @@ class ElvaBridge:
         return len(prefix.encode("utf-8"))
 
     def _byte_count_to_char_count(self, byte_pos: int, byte_count: int) -> int:
-        """Convert UTF-8 byte count to character count at a given position."""
-        text_str = str(self.text)
+        """Convert UTF-8 byte count to character count at a given position.
+
+        Uses pre-change text if available (for delete operations from server),
+        otherwise uses current text (for local operations).
+        """
+        # Use pre-change text if available (needed for deletes from server)
+        text_str = self._pre_change_text if self._pre_change_text else str(self.text)
         text_bytes = text_str.encode("utf-8")
         # Get the substring in bytes and decode to get character count
         end_pos = min(byte_pos + byte_count, len(text_bytes))
@@ -271,12 +282,15 @@ class ElvaBridge:
         elif msg_type == (SYNC, SYNC_STEP2) or msg_type == (SYNC, SYNC_UPDATE):
             # Server is sending us updates
             if payload != b"\x00\x00":  # Not empty update
+                # Store pre-change text for position conversion in observer
+                self._pre_change_text = str(self.text)
                 self._applying_from_server = True  # Don't echo to Emacs or send back
                 try:
                     self.doc.apply_update(payload)
                     self._log(f"applied update ({len(payload)} bytes)")
                 finally:
                     self._applying_from_server = False
+                    self._pre_change_text = None
 
             # After first sync, notify Emacs of initial room content
             if not self._initial_sync_done:

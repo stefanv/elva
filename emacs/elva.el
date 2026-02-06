@@ -378,8 +378,11 @@ Adjusts point appropriately when edits occur before the cursor."
           (old-point (point)))
       (pcase (alist-get 'op msg)
         ("insert"
-         (let ((pos (1+ (alist-get 'pos msg)))  ; Convert to 1-indexed
-               (text (alist-get 'text msg)))
+         (let* ((pos0 (alist-get 'pos msg))
+                (pos (1+ pos0))  ; Convert to 1-indexed
+                (text (alist-get 'text msg))
+                ;; Clamp position to valid range
+                (pos (min pos (1+ (point-max)))))
            (save-excursion
              (goto-char pos)
              (insert text))
