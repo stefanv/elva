@@ -155,7 +155,7 @@ class ElvaBridge:
         my_id = self.awareness.client_id
 
         users = []
-        for client_id, state in self.awareness._states.items():
+        for client_id, state in self.awareness.client_states.items():
             if client_id == my_id:
                 continue
             if state is None:
@@ -259,12 +259,6 @@ class ElvaBridge:
         msg = encode_message((SYNC, SYNC_STEP2), update)
         await self._ws.send(msg)
         self._log("sent sync step 2")
-
-    async def _send_update(self):
-        """Send incremental update to server."""
-        # Get update since last sync (from empty state for now)
-        # In practice, we send the transaction update via observer
-        pass
 
     async def _on_ws_message(self, data: bytes):
         """Handle incoming WebSocket message."""
@@ -388,7 +382,7 @@ class ElvaBridge:
                 # Clear any stale awareness from previous sessions
                 # Only keep our own local state
                 my_id = self.awareness.client_id
-                stale_ids = [cid for cid in self.awareness._states if cid != my_id]
+                stale_ids = [cid for cid in self.awareness.client_states if cid != my_id]
                 if stale_ids:
                     self.awareness.remove_awareness_states(stale_ids, origin="local")
                     self._log(f"cleared {len(stale_ids)} stale awareness entries")

@@ -542,7 +542,8 @@ class YTextArea(TextArea, TextEventParser):
         for client_id, byte_pos in cursors.items():
             color = self._get_cursor_color(client_id)
             self._remote_cursors[client_id] = (byte_pos, color)
-        # Clear the line cache and force full re-render
+        # NOTE: _line_cache is a Textual private API; no public cache
+        # invalidation exists. May break on Textual upgrades.
         self._line_cache.clear()
         self.refresh()
 
@@ -567,7 +568,7 @@ class YTextArea(TextArea, TextEventParser):
                 adjusted[client_id] = (byte_pos, color)
         self._remote_cursors = adjusted
 
-        # Clear line cache to ensure cursors are redrawn at new positions
+        # NOTE: _line_cache is a Textual private API (see update_remote_cursors)
         self._line_cache.clear()
 
     def _notify_cursor_change(self):
@@ -659,11 +660,12 @@ class YTextArea(TextArea, TextEventParser):
             parts = strip.divide([screen_col, end_col, strip_len])
 
             if len(parts) >= 2:
-                # Apply background color to the cursor character
-                # We need to combine styles since apply_style doesn't override existing bgcolor
+                # Apply background color to the cursor character.
+                # We combine styles since apply_style doesn't override existing bgcolor.
                 cursor_style = Style(bgcolor=color)
                 cursor_part = parts[1]
-                # Rebuild segments with combined style
+                # NOTE: _segments is a Textual private API; Strip doesn't expose
+                # a public way to iterate or restyle individual segments.
                 new_segments = []
                 for seg in cursor_part._segments:
                     combined_style = (seg.style or Style()) + cursor_style

@@ -46,6 +46,9 @@
 (defvar-local elva--process nil
   "The bridge subprocess for this buffer.")
 
+(defvar-local elva--process-buffers nil
+  "List of buffers (stdout, stderr) created for the bridge process.")
+
 (defvar-local elva--applying-remote nil
   "Non-nil when applying remote changes (to prevent echo).")
 
@@ -261,21 +264,32 @@ URL can be in various formats (room IDs must be 10-250 chars)."
     (elva--do-connect full-url nil)
     (message "Elva: connecting, will push buffer if room is empty...")))
 
+(defun elva--kill-process-buffers ()
+  "Kill the stdout and stderr buffers of the bridge process."
+  (dolist (buf elva--process-buffers)
+    (when (buffer-live-p buf)
+      (kill-buffer buf)))
+  (setq elva--process-buffers nil))
+
 (defun elva--do-connect (url &optional send-buffer-content)
   "Internal function to establish connection to URL.
 If SEND-BUFFER-CONTENT is non-nil, send current buffer content to room."
   ;; Kill any existing process first to prevent orphans
   (when (and elva--process (process-live-p elva--process))
+    (elva--kill-process-buffers)
     (delete-process elva--process)
     (setq elva--process nil))
-  (let ((buffer (current-buffer)))
+  (let ((buffer (current-buffer))
+        (stdout-buf (generate-new-buffer " *elva-bridge*"))
+        (stderr-buf (generate-new-buffer " *elva-bridge-stderr*")))
+    (setq elva--process-buffers (list stdout-buf stderr-buf))
     (setq elva--process
           (make-process
            :name "elva-bridge"
-           :buffer (generate-new-buffer " *elva-bridge*")
+           :buffer stdout-buf
            :command (list elva-bridge-program elva-bridge-script url)
            :connection-type 'pipe
-           :stderr (generate-new-buffer " *elva-bridge-stderr*")
+           :stderr stderr-buf
            :filter (lambda (proc output)
                      (elva--filter proc output buffer))
            :sentinel (lambda (proc event)
@@ -478,20 +492,27 @@ Positions are 0-indexed (as stored in cursor data)."
   ;; Create overlays for each user with cursor position
   (dolist (user elva--remote-cursor-data)
     (let* ((id (alist-get 'id user))
-           (cursor-pos (alist-get 'cursor user))
-           (pos (1+ (or cursor-pos -1))))  ; Convert to 1-indexed
-      (when (and cursor-pos (> pos 0) (<= pos (point-max)))
-        (let* ((color (elva--get-cursor-color id))
-               (ov (make-overlay pos pos nil nil nil)))
-          (if (>= pos (point-max))
-              ;; At end of buffer: show colored block after position
-              (overlay-put ov 'after-string
-                           (propertize " " 'face `(:background ,color)))
-            ;; Normal case: highlight the character
+           (cursor-pos (alist-get 'cursor user)))
+      (when (and cursor-pos (>= cursor-pos 0))
+        (let* ((pos (1+ cursor-pos))   ; Convert to 1-indexed
+               (color (elva--get-cursor-color id))
+               (ov (make-overlay pos pos)))
+          (cond
+           ((> pos (point-max))
+            ;; Beyond buffer: discard overlay
+            (delete-overlay ov))
+           ((= pos (point-max))
+            ;; At end of buffer: show colored block after position
+            (overlay-put ov 'after-string
+                         (propertize " " 'face `(:background ,color)))
+            (overlay-put ov 'elva-cursor t)
+            (push (cons id ov) elva--remote-cursors))
+           (t
+            ;; Normal case: highlight the character at cursor
             (move-overlay ov pos (1+ pos))
-            (overlay-put ov 'face `(:background ,color)))
-          (overlay-put ov 'elva-cursor t)
-          (push (cons id ov) elva--remote-cursors))))))
+            (overlay-put ov 'face `(:background ,color))
+            (overlay-put ov 'elva-cursor t)
+            (push (cons id ov) elva--remote-cursors))))))))
 
 (defun elva--update-remote-cursors (users)
   "Update overlays showing remote USERS' cursor positions."
@@ -505,30 +526,29 @@ Positions are 0-indexed (as stored in cursor data)."
 
 (defun elva--sentinel (proc event buffer)
   "Handle process PROC state change EVENT for BUFFER."
-  (let ((status (string-trim event)))
-    (when (and (buffer-live-p buffer)
-               (not (process-live-p proc)))
-      (with-current-buffer buffer
-        (setq elva--process nil)
-        (remove-hook 'after-change-functions #'elva--after-change t)
-        (force-mode-line-update)
-        ;; Attempt reconnection if enabled and not manually disconnected
-        (if (and elva--url
-                 (> elva-max-reconnect-attempts 0)
-                 (< elva--reconnect-count elva-max-reconnect-attempts))
-            (progn
-              (cl-incf elva--reconnect-count)
-              (message "Elva: connection lost. Reconnecting in %.1fs... (attempt %d/%d)"
-                       elva-reconnect-delay
-                       elva--reconnect-count
-                       elva-max-reconnect-attempts)
-              (setq elva--reconnect-timer
-                    (run-at-time elva-reconnect-delay nil
-                                 #'elva--try-reconnect buffer)))
-          ;; No more attempts or reconnection disabled
-          (if elva--url
-              (message "Elva: connection lost after %d attempts" elva--reconnect-count)
-            (message "Elva: disconnected")))))))
+  (when (and (buffer-live-p buffer)
+             (not (process-live-p proc)))
+    (with-current-buffer buffer
+      (setq elva--process nil)
+      (remove-hook 'after-change-functions #'elva--after-change t)
+      (force-mode-line-update)
+      ;; Attempt reconnection if enabled and not manually disconnected
+      (if (and elva--url
+               (> elva-max-reconnect-attempts 0)
+               (< elva--reconnect-count elva-max-reconnect-attempts))
+          (progn
+            (cl-incf elva--reconnect-count)
+            (message "Elva: connection lost. Reconnecting in %.1fs... (attempt %d/%d)"
+                     elva-reconnect-delay
+                     elva--reconnect-count
+                     elva-max-reconnect-attempts)
+            (setq elva--reconnect-timer
+                  (run-at-time elva-reconnect-delay nil
+                               #'elva--try-reconnect buffer)))
+        ;; No more attempts or reconnection disabled
+        (if elva--url
+            (message "Elva: connection lost after %d attempts" elva--reconnect-count)
+          (message "Elva: disconnected"))))))
 
 (defun elva--try-reconnect (buffer)
   "Attempt to reconnect BUFFER to Elva."
@@ -576,8 +596,9 @@ Positions are 0-indexed (as stored in cursor data)."
   (dolist (entry elva--remote-cursors)
     (delete-overlay (cdr entry)))
   (setq elva--remote-cursors nil)
-  ;; Kill the process
+  ;; Kill the process and its buffers
   (when elva--process
+    (elva--kill-process-buffers)
     (delete-process elva--process)
     (setq elva--process nil))
   (remove-hook 'after-change-functions #'elva--after-change t)
