@@ -167,11 +167,14 @@ class YTextArea(TextArea, TextEventParser):
         start = self.get_location_from_binary_index(retain)
         end = self.get_location_from_binary_index(retain + delete)
 
-        # Adjust remote cursor positions based on the edit
-        insert_bytes = len(insert.encode("utf-8")) if insert else 0
-        delta = insert_bytes - delete
-        if delta != 0:
-            self._adjust_remote_cursors(retain, delta)
+        # Only adjust remote cursor positions for LOCAL edits
+        # Remote edits: the remote client will send their updated cursor position
+        # Local edits: remote clients haven't seen our edit yet, so adjust their cursors
+        if self._local_edit_in_progress:
+            insert_bytes = len(insert.encode("utf-8")) if insert else 0
+            delta = insert_bytes - delete
+            if delta != 0:
+                self._adjust_remote_cursors(retain, delta)
 
         # apply the update to the UI
         self._apply_update(insert, start, end)
@@ -539,10 +542,9 @@ class YTextArea(TextArea, TextEventParser):
         for client_id, byte_pos in cursors.items():
             color = self._get_cursor_color(client_id)
             self._remote_cursors[client_id] = (byte_pos, color)
-        # Clear the line cache to force re-render with new cursor positions
+        # Clear the line cache and force full re-render
         self._line_cache.clear()
-        # Refresh all lines in the document
-        self.refresh_lines(0, self.document.line_count)
+        self.refresh()
 
     def _adjust_remote_cursors(self, pos: int, delta: int):
         """
@@ -620,8 +622,14 @@ class YTextArea(TextArea, TextEventParser):
 
         # Collect cursor positions on this line
         cursor_positions = []
+        doc_text = self.document.text
+        doc_bytes = len(doc_text.encode("utf-8"))
+
         for client_id, (byte_pos, color) in self._remote_cursors.items():
             try:
+                # Clamp byte position to valid range
+                byte_pos = max(0, min(byte_pos, doc_bytes))
+
                 # Convert byte position to document location
                 location = self.get_location_from_binary_index(byte_pos)
 
@@ -636,7 +644,7 @@ class YTextArea(TextArea, TextEventParser):
 
                     if 0 <= screen_col < strip.cell_length:
                         cursor_positions.append((screen_col, color))
-            except (IndexError, ValueError):
+            except (IndexError, ValueError, AttributeError):
                 # Skip if position is invalid
                 pass
 

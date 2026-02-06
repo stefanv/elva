@@ -303,17 +303,24 @@ If SEND-BUFFER-CONTENT is non-nil, send current buffer content to room."
   "Handle local buffer change between BEG and END.
 OLD-LEN is the length of the replaced text."
   (unless elva--applying-remote
-    ;; Handle deletion
-    (when (> old-len 0)
-      (elva--queue-change `((op . "delete")
-                            (pos . ,(1- beg))      ; Convert to 0-indexed
-                            (count . ,old-len))))
-    ;; Handle insertion
-    (when (> end beg)
-      (let ((text (buffer-substring-no-properties beg end)))
-        (elva--queue-change `((op . "insert")
-                              (pos . ,(1- beg))    ; Convert to 0-indexed
-                              (text . ,text)))))))
+    (let ((pos0 (1- beg))                ; 0-indexed position
+          (insert-len (- end beg)))
+      ;; Handle deletion
+      (when (> old-len 0)
+        (elva--queue-change `((op . "delete")
+                              (pos . ,pos0)
+                              (count . ,old-len))))
+      ;; Handle insertion
+      (when (> insert-len 0)
+        (let ((text (buffer-substring-no-properties beg end)))
+          (elva--queue-change `((op . "insert")
+                                (pos . ,pos0)
+                                (text . ,text)))))
+      ;; Adjust remote cursor positions for this LOCAL edit
+      (let ((delta (- insert-len old-len)))
+        (when (/= delta 0)
+          (elva--adjust-cursor-positions pos0 delta)
+          (elva--redraw-remote-cursors))))))
 
 (defun elva--queue-change (change)
   "Queue CHANGE to be sent, batching rapid changes together."
@@ -372,29 +379,25 @@ Adjusts point appropriately when edits occur before the cursor."
       (pcase (alist-get 'op msg)
         ("insert"
          (let ((pos (1+ (alist-get 'pos msg)))  ; Convert to 1-indexed
-               (text (alist-get 'text msg))
-               (pos0 (alist-get 'pos msg)))     ; 0-indexed for cursor adjustment
+               (text (alist-get 'text msg)))
            (save-excursion
              (goto-char pos)
              (insert text))
            ;; Adjust point if insert was before cursor
            (when (< pos old-point)
              (goto-char (+ old-point (length text))))
-           ;; Adjust stored cursor positions and redraw
-           (elva--adjust-cursor-positions pos0 (length text))
+           ;; Redraw cursors (don't adjust - remote client will send updated position)
            (elva--redraw-remote-cursors)))
         ("delete"
          (let ((pos (1+ (alist-get 'pos msg)))  ; Convert to 1-indexed
-               (count (alist-get 'count msg))
-               (pos0 (alist-get 'pos msg)))     ; 0-indexed for cursor adjustment
+               (count (alist-get 'count msg)))
            (save-excursion
              (goto-char pos)
              (delete-char count))
            ;; Adjust point if delete was before cursor
            (when (< pos old-point)
              (goto-char (max pos (- old-point count))))
-           ;; Adjust stored cursor positions and redraw
-           (elva--adjust-cursor-positions pos0 (- count))
+           ;; Redraw cursors (don't adjust - remote client will send updated position)
            (elva--redraw-remote-cursors)))
         ("sync_complete"
          (let ((room-length (alist-get 'length msg))
