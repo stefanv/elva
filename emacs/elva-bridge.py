@@ -142,12 +142,14 @@ class ElvaBridge:
     def _send_awareness_to_emacs(self):
         """Send other users' cursor positions to Emacs."""
         my_id = self.awareness.client_id
+
         users = []
         for client_id, state in self.awareness._states.items():
             if client_id == my_id:
                 continue
             if state is None:
                 continue
+
             user_info = state.get("user", {})
             cursor = state.get("cursor")
             user_data = {
@@ -369,6 +371,14 @@ class ElvaBridge:
                 self._ws = ws
                 self._log("connected")
 
+                # Clear any stale awareness from previous sessions
+                # Only keep our own local state
+                my_id = self.awareness.client_id
+                stale_ids = [cid for cid in self.awareness._states if cid != my_id]
+                if stale_ids:
+                    self.awareness.remove_awareness_states(stale_ids, origin="local")
+                    self._log(f"cleared {len(stale_ids)} stale awareness entries")
+
                 # Initial sync
                 await self._send_sync_step1()
 
@@ -386,13 +396,25 @@ class ElvaBridge:
                 await ws.send(msg)
                 self._log("sent initial awareness")
 
-                # Run all tasks concurrently
-                await asyncio.gather(
-                    self._ws_receiver(),
-                    self._ws_sender(),
-                    self._awareness_sender(),
-                    self._stdin_reader(),
-                )
+                try:
+                    # Run all tasks concurrently
+                    await asyncio.gather(
+                        self._ws_receiver(),
+                        self._ws_sender(),
+                        self._awareness_sender(),
+                        self._stdin_reader(),
+                    )
+                finally:
+                    # Send awareness disconnect (set local state to None)
+                    try:
+                        self.awareness.set_local_state(None)
+                        client_ids = [self.awareness.client_id]
+                        payload = self.awareness.encode_awareness_update(client_ids)
+                        msg = encode_message((AWARENESS,), bytes(payload))
+                        await ws.send(msg)
+                        self._log("sent awareness disconnect")
+                    except Exception:
+                        pass  # Connection may already be closed
         except websockets.exceptions.InvalidStatus as e:
             # HTTP error from server - use the server's reason phrase
             status_code = e.response.status_code

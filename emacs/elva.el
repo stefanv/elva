@@ -261,6 +261,10 @@ URL can be in various formats (room IDs must be 10-250 chars)."
 (defun elva--do-connect (url &optional send-buffer-content)
   "Internal function to establish connection to URL.
 If SEND-BUFFER-CONTENT is non-nil, send current buffer content to room."
+  ;; Kill any existing process first to prevent orphans
+  (when (and elva--process (process-live-p elva--process))
+    (delete-process elva--process)
+    (setq elva--process nil))
   (let ((buffer (current-buffer)))
     (setq elva--process
           (make-process
@@ -385,11 +389,14 @@ Adjusts point appropriately when edits occur before the cursor."
                (push-mode elva--push-buffer-on-sync))
            (setq elva--push-buffer-on-sync nil)
            (cond
-            ;; Reconnect mode: restore our saved content if room is empty
+            ;; Reconnect mode: use room content or restore saved content
             ((eq push-mode 'always)
              (if (> room-length 0)
-                 ;; Room has content, we'll use it (already synced)
-                 (message "Elva: reconnected, using room content")
+                 ;; Room has content - replace buffer with room content
+                 (let ((inhibit-modification-hooks t))
+                   (erase-buffer)
+                   (insert content)
+                   (message "Elva: reconnected, loaded room content (%d chars)" room-length))
                ;; Room is empty, restore our saved content
                (when (and elva--saved-content (> (length elva--saved-content) 0))
                  (elva--send `((op . "insert") (pos . 0) (text . ,elva--saved-content)))

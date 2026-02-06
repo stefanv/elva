@@ -85,6 +85,8 @@ class YTextArea(TextArea, TextEventParser):
         self._remote_cursors = {}
         self._cursor_color_map = {}
         self._cursor_change_callback = None
+        self._last_notified_cursor_pos = None  # Debounce cursor updates
+        self._applying_remote_edit = False  # Flag to suppress cursor broadcast during remote edits
 
     @classmethod
     def code_editor(cls, ytext: Text, *args: tuple, **kwargs: dict) -> Self:
@@ -300,37 +302,39 @@ class YTextArea(TextArea, TextEventParser):
             start: the start location of the deletion range.
             end: the end location of the deletion range.
         """
-        old_gutter_width = self.gutter_width
+        # Suppress cursor broadcast during remote edit application
+        self._applying_remote_edit = True
+        try:
+            old_gutter_width = self.gutter_width
 
-        # replaces edit.do(self)
-        selection, top, bottom, insert_end = self._edit(text, start, end)
+            # replaces edit.do(self)
+            selection, top, bottom, insert_end = self._edit(text, start, end)
 
-        new_gutter_width = self.gutter_width
+            new_gutter_width = self.gutter_width
 
-        if old_gutter_width != new_gutter_width:
-            self.wrapped_document.wrap(
-                self.wrap_width,
-                self.indent_width,
-            )
-        else:
-            self.wrapped_document.wrap_range(
-                top,
-                bottom,
-                insert_end,
-            )
+            if old_gutter_width != new_gutter_width:
+                self.wrapped_document.wrap(
+                    self.wrap_width,
+                    self.indent_width,
+                )
+            else:
+                self.wrapped_document.wrap_range(
+                    top,
+                    bottom,
+                    insert_end,
+                )
 
-        self._refresh_size()
+            self._refresh_size()
 
-        # replaces edit.after(self)
-        self.selection = selection
-        self.record_cursor_width()
+            # replaces edit.after(self)
+            self.selection = selection
+            self.record_cursor_width()
 
-        self._build_highlight_map()
-        self.post_message(self.Changed(self))
-
-        # Update cursor position for awareness (selection watch may not trigger
-        # if selection value didn't change)
-        self._notify_cursor_change()
+            self._build_highlight_map()
+            self.post_message(self.Changed(self))
+        finally:
+            # Re-enable cursor broadcast after remote edit
+            self._applying_remote_edit = False
 
     def _edit(
         self, text: str, top: tuple, bottom: tuple
@@ -528,11 +532,24 @@ class YTextArea(TextArea, TextEventParser):
     def _notify_cursor_change(self):
         """
         Notify the cursor change callback of the current cursor position.
+
+        Only notifies if the position has actually changed to avoid redundant updates.
+        Skips notification during remote edit application to prevent cursor "dragging".
         """
-        if self._cursor_change_callback is not None:
-            # Get cursor position (end of selection) as byte position
-            _, end = self.selection
-            byte_pos = self.get_binary_index_from_location(end)
+        if self._cursor_change_callback is None:
+            return
+
+        # Don't broadcast cursor changes caused by remote edits
+        if self._applying_remote_edit:
+            return
+
+        # Get cursor position (end of selection) as byte position
+        _, end = self.selection
+        byte_pos = self.get_binary_index_from_location(end)
+
+        # Only notify if position changed
+        if byte_pos != self._last_notified_cursor_pos:
+            self._last_notified_cursor_pos = byte_pos
             self._cursor_change_callback(byte_pos)
 
     def _watch_selection(self, selection: Selection):
