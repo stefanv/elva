@@ -87,6 +87,7 @@ class YTextArea(TextArea, TextEventParser):
         self._cursor_change_callback = None
         self._last_notified_cursor_pos = None  # Debounce cursor updates
         self._applying_remote_edit = False  # Flag to suppress cursor broadcast during remote edits
+        self._local_edit_in_progress = False  # Flag to detect local vs remote edits
 
     @classmethod
     def code_editor(cls, ytext: Text, *args: tuple, **kwargs: dict) -> Self:
@@ -225,13 +226,18 @@ class YTextArea(TextArea, TextEventParser):
         istart = self.get_binary_index_from_location(start)
         iend = self.get_binary_index_from_location(end)
 
-        # perform an atomic edit
-        with doc.transaction(origin=self.origin):
-            if not istart == iend:
-                del self.ytext[istart:iend]
+        # Mark as local edit so _apply_update doesn't suppress cursor broadcast
+        self._local_edit_in_progress = True
+        try:
+            # perform an atomic edit
+            with doc.transaction(origin=self.origin):
+                if not istart == iend:
+                    del self.ytext[istart:iend]
 
-            if insert:
-                self.ytext.insert(istart, insert)
+                if insert:
+                    self.ytext.insert(istart, insert)
+        finally:
+            self._local_edit_in_progress = False
 
     def delete(self, start: tuple, end: tuple):
         """
@@ -302,8 +308,10 @@ class YTextArea(TextArea, TextEventParser):
             start: the start location of the deletion range.
             end: the end location of the deletion range.
         """
-        # Suppress cursor broadcast during remote edit application
-        self._applying_remote_edit = True
+        # Suppress cursor broadcast during remote edit application (not local edits)
+        is_remote = not self._local_edit_in_progress
+        if is_remote:
+            self._applying_remote_edit = True
         try:
             old_gutter_width = self.gutter_width
 
@@ -334,7 +342,8 @@ class YTextArea(TextArea, TextEventParser):
             self.post_message(self.Changed(self))
         finally:
             # Re-enable cursor broadcast after remote edit
-            self._applying_remote_edit = False
+            if is_remote:
+                self._applying_remote_edit = False
 
     def _edit(
         self, text: str, top: tuple, bottom: tuple

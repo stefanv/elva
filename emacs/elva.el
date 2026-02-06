@@ -99,6 +99,9 @@ Values: nil, `if-empty' (push only if room empty), `always' (reconnect).")
 (defvar-local elva--remote-cursors nil
   "Alist of (client-id . overlay) for remote user cursors.")
 
+(defvar-local elva--remote-cursor-data nil
+  "Last received cursor data from awareness, for redrawing after edits.")
+
 (defvar-local elva--cursor-idle-timer nil
   "Timer for sending cursor position updates.")
 
@@ -361,6 +364,8 @@ OLD-LEN is the length of the replaced text."
   "Apply remote change MSG to BUFFER.
 Adjusts point appropriately when edits occur before the cursor."
   (with-current-buffer buffer
+    ;; Flush any pending local changes first to avoid position conflicts
+    (elva--flush-changes)
     (let ((elva--applying-remote t)
           (inhibit-modification-hooks t)
           (old-point (point)))
@@ -373,7 +378,9 @@ Adjusts point appropriately when edits occur before the cursor."
              (insert text))
            ;; Adjust point if insert was before cursor
            (when (< pos old-point)
-             (goto-char (+ old-point (length text))))))
+             (goto-char (+ old-point (length text))))
+           ;; Redraw cursors to prevent stretching
+           (elva--redraw-remote-cursors)))
         ("delete"
          (let ((pos (1+ (alist-get 'pos msg)))  ; Convert to 1-indexed
                (count (alist-get 'count msg)))
@@ -382,7 +389,9 @@ Adjusts point appropriately when edits occur before the cursor."
              (delete-char count))
            ;; Adjust point if delete was before cursor
            (when (< pos old-point)
-             (goto-char (max pos (- old-point count))))))
+             (goto-char (max pos (- old-point count))))
+           ;; Redraw cursors after text change
+           (elva--redraw-remote-cursors)))
         ("sync_complete"
          (let ((room-length (alist-get 'length msg))
                (content (alist-get 'content msg))
@@ -435,21 +444,21 @@ Adjusts point appropriately when edits occur before the cursor."
         (push (cons client-id color) elva--cursor-color-map)
         color)))
 
-(defun elva--update-remote-cursors (users)
-  "Update overlays showing remote USERS' cursor positions."
+(defun elva--redraw-remote-cursors ()
+  "Redraw remote cursor overlays from stored data."
   ;; Remove all old overlays first
   (dolist (entry elva--remote-cursors)
     (delete-overlay (cdr entry)))
   (setq elva--remote-cursors nil)
   ;; Create overlays for each user with cursor position
-  (dolist (user users)
+  (dolist (user elva--remote-cursor-data)
     (let* ((id (alist-get 'id user))
            (cursor-pos (alist-get 'cursor user))
            (pos (1+ (or cursor-pos -1))))  ; Convert to 1-indexed
       (when (and cursor-pos (> pos 0) (<= pos (point-max)))
         (let* ((color (elva--get-cursor-color id))
-               (ov (make-overlay pos pos)))
-          (if (= pos (point-max))
+               (ov (make-overlay pos pos nil nil nil)))
+          (if (>= pos (point-max))
               ;; At end of buffer: show colored block after position
               (overlay-put ov 'after-string
                            (propertize " " 'face `(:background ,color)))
@@ -458,6 +467,11 @@ Adjusts point appropriately when edits occur before the cursor."
             (overlay-put ov 'face `(:background ,color)))
           (overlay-put ov 'elva-cursor t)
           (push (cons id ov) elva--remote-cursors))))))
+
+(defun elva--update-remote-cursors (users)
+  "Update overlays showing remote USERS' cursor positions."
+  (setq elva--remote-cursor-data users)
+  (elva--redraw-remote-cursors))
 
 (defun elva--send-cursor-position ()
   "Send current cursor position to bridge for awareness."
