@@ -223,13 +223,13 @@ Completion offers rooms from the default server if available."
          (room-id (elva--extract-room-id full-url))
          (buf-name (format "*elva:%s*" room-id))
          (buffer (get-buffer buf-name)))
-    ;; Check if already connected to this room
+    ;; If already connected to this room, disconnect first to allow refresh
     (when (and buffer
                (buffer-live-p buffer)
                (with-current-buffer buffer elva--process)
                (process-live-p (with-current-buffer buffer elva--process)))
-      (pop-to-buffer buffer)
-      (error "Already connected to room '%s'" room-id))
+      (with-current-buffer buffer
+        (elva-disconnect)))
     ;; Create or reuse buffer for the room
     (setq buffer (get-buffer-create buf-name))
     (pop-to-buffer buffer)
@@ -412,7 +412,14 @@ Adjusts point appropriately when edits occur before the cursor."
                (let ((buf-content (buffer-string)))
                  (when (> (length buf-content) 0)
                    (elva--send `((op . "insert") (pos . 0) (text . ,buf-content)))
-                   (message "Elva: pushed buffer to room"))))))
+                   (message "Elva: pushed buffer to room")))))
+            ;; Normal connect: load room content
+            (t
+             (when (> room-length 0)
+               (let ((inhibit-modification-hooks t))
+                 (erase-buffer)
+                 (insert content))
+               (message "Elva: connected, loaded room content (%d chars)" room-length))))
            (force-mode-line-update)))
         ("awareness"
          (elva--update-remote-cursors (alist-get 'users msg)))
