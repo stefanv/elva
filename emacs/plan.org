@@ -186,13 +186,29 @@ existing room content. This is dangerous for joining existing rooms.
 - [X] Bridge: receive and forward cursor positions to Emacs
 - [X] Bridge: clear stale awareness on connect
 - [X] Bridge: send disconnect awareness on shutdown
+- [X] Bridge: fix position conversion for end-of-file edits
+  - Delete operations used post-mutation text for byte→char conversion
+  - Fix: store pre-change text before applying server updates
 - [X] Emacs: display remote cursors as highlighted characters
 - [X] Emacs: adjust cursor positions when edits happen
 - [X] Emacs: redraw cursors after text operations
+- [X] Emacs: clamp insert positions to valid buffer range
+- [X] Emacs: clean up process buffer leak on reconnect/disconnect
 - [X] Elva TUI: display remote cursors with colored backgrounds
 - [X] Elva TUI: adjust cursor positions when edits happen
 - [X] Elva TUI: handle line wrapping in cursor display
 - [X] Elva TUI: distinguish local vs remote edits for cursor broadcast
+
+** DONE Tests for Cursor Logic
+- [X] Bridge: byte↔char position conversion (ASCII, multibyte, clamping)
+- [X] Bridge: byte count to char count conversion
+- [X] Bridge: pre-change text mechanism for server deletes
+- [X] Bridge: delta processing (_on_text_change)
+- [X] Bridge: awareness filtering and byte→char cursor conversion
+- [X] Widget: remote cursor position adjustment after edits
+- [X] Widget: cursor change notification suppression
+- [X] Widget: byte↔char index conversion and round-trips
+- [X] Fix pre-existing test_server assertion for updated validation messages
 
 ** DONE Auto-detect ws:// vs wss://
 - [X] Client: probe_tls() function to detect TLS support
