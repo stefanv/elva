@@ -155,7 +155,9 @@ class ElvaBridge:
         my_id = self.awareness.client_id
 
         users = []
-        for client_id, state in self.awareness.client_states.items():
+        # NOTE: pycrdt.Awareness only exposes _states; the public client_states
+        # property lives on elva.awareness.Awareness which the bridge doesn't use.
+        for client_id, state in self.awareness._states.items():
             if client_id == my_id:
                 continue
             if state is None:
@@ -382,7 +384,7 @@ class ElvaBridge:
                 # Clear any stale awareness from previous sessions
                 # Only keep our own local state
                 my_id = self.awareness.client_id
-                stale_ids = [cid for cid in self.awareness.client_states if cid != my_id]
+                stale_ids = [cid for cid in self.awareness._states if cid != my_id]
                 if stale_ids:
                     self.awareness.remove_awareness_states(stale_ids, origin="local")
                     self._log(f"cleared {len(stale_ids)} stale awareness entries")
