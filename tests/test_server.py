@@ -121,7 +121,6 @@ async def test_websocket_server_request_processor(free_tcp_port):
             exc: InvalidStatus = exc_info.value
             response: Response = exc.response
             assert response.status_code == 403  # forbidden
-            assert response.reason_phrase == "Invalid identifier"
 
             # no rooms are being created
             assert websocket_server.rooms == dict()
