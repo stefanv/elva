@@ -91,7 +91,7 @@ The cleaner solution: use pycrdt as a subprocess that speaks native Yjs protocol
 - [X] User identification (names, colors)
   - Consistent color assignment per client ID
   - User names from awareness state
-- [ ] Multiple buffers/rooms
+- [X] Multiple buffers/rooms
 - [ ] Offline support (queue changes, sync on reconnect)
 
 ** TODO Phase 6: Distribution
