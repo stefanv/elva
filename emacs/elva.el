@@ -193,25 +193,6 @@ Accepts various formats (room IDs must be 10-250 chars):
 (add-to-list 'mode-line-misc-info
              '(:eval (elva--modeline-string)))
 
-(defun elva--fetch-rooms (&optional host port)
-  "Fetch list of room identifiers from server.
-Uses HOST and PORT, defaulting to `elva-default-host' and `elva-default-port'."
-  (let* ((host (or host elva-default-host))
-         (port (or port elva-default-port))
-         (url (format "http://%s:%d/rooms" host port)))
-    (condition-case err
-        (with-current-buffer (url-retrieve-synchronously url t t 5)
-          (goto-char (point-min))
-          (re-search-forward "\n\n")
-          (let* ((json-object-type 'alist)
-                 (json-array-type 'list)
-                 (data (json-read))
-                 (rooms (alist-get 'rooms data)))
-            (mapcar (lambda (r) (alist-get 'identifier r)) rooms)))
-      (error
-       (message "Elva: could not fetch rooms: %s" (error-message-string err))
-       nil))))
-
 (defun elva-connect (url)
   "Connect to Elva room and open it in a new buffer.
 Creates a new buffer named after the room ID and displays the room contents.
@@ -223,7 +204,8 @@ URL can be in various formats (room IDs must be 10-250 chars):
 
 Completion offers rooms from the default server if available."
   (interactive
-   (let ((rooms (elva--fetch-rooms)))
+   (let ((rooms (mapcar (lambda (r) (alist-get 'identifier r))
+                        (elva--fetch-rooms))))
      (list (completing-read "Elva room: " rooms nil nil))))
   (let* ((full-url (elva--normalize-url url))
          (room-id (elva--extract-room-id full-url))
@@ -596,11 +578,11 @@ Positions are 0-indexed (as stored in cursor data)."
   (dolist (entry elva--remote-cursors)
     (delete-overlay (cdr entry)))
   (setq elva--remote-cursors nil)
-  ;; Kill the process and its buffers
+  ;; Kill the process first, then its buffers (so buffer kill won't prompt)
   (when elva--process
-    (elva--kill-process-buffers)
     (delete-process elva--process)
-    (setq elva--process nil))
+    (setq elva--process nil)
+    (elva--kill-process-buffers))
   (remove-hook 'after-change-functions #'elva--after-change t)
   (remove-hook 'post-command-hook #'elva--maybe-send-cursor t)
   (force-mode-line-update)
@@ -619,6 +601,89 @@ Positions are 0-indexed (as stored in cursor data)."
     (message "Elva: disconnected from %s" elva--url))
    (t
     (message "Elva: not connected"))))
+
+;;; Room listing
+
+(defvar-local elva-rooms--host nil
+  "Host used for the current rooms listing.")
+
+(defvar-local elva-rooms--port nil
+  "Port used for the current rooms listing.")
+
+(defun elva--fetch-rooms (&optional host port)
+  "Fetch room data from an Elva server.
+Uses HOST and PORT, defaulting to `elva-default-host' and `elva-default-port'.
+Returns a list of alists with keys `identifier', `clients', `persistent'."
+  (let* ((host (or host elva-default-host))
+         (port (or port elva-default-port))
+         (url (format "http://%s:%d/rooms" host port)))
+    (let ((buf (condition-case nil
+                   (url-retrieve-synchronously url t t 5)
+                 (error nil))))
+      (if (not buf)
+          (progn (message "Elva: could not reach server at %s:%d" host port) nil)
+        (unwind-protect
+            (with-current-buffer buf
+              (goto-char (point-min))
+              (re-search-forward "\n\n")
+              (let* ((json-object-type 'alist)
+                     (json-array-type 'list)
+                     (data (json-read)))
+                (alist-get 'rooms data)))
+          (kill-buffer buf))))))
+
+(defun elva-rooms--entries ()
+  "Return tabulated-list entries for the rooms buffer."
+  (let ((rooms (elva--fetch-rooms elva-rooms--host elva-rooms--port)))
+    (mapcar (lambda (room)
+              (let ((id (or (alist-get 'identifier room) ""))
+                    (clients (or (alist-get 'clients room) 0))
+                    (persistent (if (eq (alist-get 'persistent room) t)
+                                    "yes" "no")))
+                (list id (vector id (number-to-string clients) persistent))))
+            rooms)))
+
+(defun elva-rooms--connect ()
+  "Connect to the room on the current line."
+  (interactive)
+  (let ((room-id (tabulated-list-get-id)))
+    (when room-id
+      (let ((url (format "ws://%s:%d/%s"
+                         elva-rooms--host elva-rooms--port room-id)))
+        (elva-connect url)))))
+
+(defvar elva-rooms-mode-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map tabulated-list-mode-map)
+    (define-key map (kbd "RET") #'elva-rooms--connect)
+    map)
+  "Keymap for `elva-rooms-mode'.")
+
+(define-derived-mode elva-rooms-mode tabulated-list-mode "Elva-Rooms"
+  "Major mode for listing Elva rooms.
+\\{elva-rooms-mode-map}"
+  (setq tabulated-list-format [("Room" 40 t)
+                                ("Clients" 8 t)
+                                ("Persistent" 10 t)])
+  (tabulated-list-init-header))
+
+(defun elva-list-rooms (host port)
+  "List available rooms on an Elva server.
+Prompts for HOST and PORT, then displays rooms in a tabulated list.
+Press RET on a room to connect, g to refresh."
+  (interactive
+   (list (read-string (format "Host (default %s): " elva-default-host)
+                      nil nil elva-default-host)
+         (read-number (format "Port (default %d): " elva-default-port)
+                      elva-default-port)))
+  (let ((buf (get-buffer-create "*Elva Rooms*")))
+    (with-current-buffer buf
+      (elva-rooms-mode)
+      (setq-local elva-rooms--host host)
+      (setq-local elva-rooms--port port)
+      (setq tabulated-list-entries #'elva-rooms--entries)
+      (tabulated-list-print t))
+    (pop-to-buffer buf)))
 
 (provide 'elva)
 ;;; elva.el ends here
