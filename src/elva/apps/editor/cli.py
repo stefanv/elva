@@ -16,65 +16,24 @@ APP_NAME = "editor"
 """The name of the app."""
 
 
-def fetch_rooms(host: str, port: int) -> list[str]:
+def fetch_rooms_info(host: str, port: int) -> list[dict]:
     """
-    Fetch list of room identifiers from server.
+    Fetch list of room info dicts from server.
 
     Arguments:
         host: the server hostname.
         port: the server port.
 
     Returns:
-        list of room identifiers, or empty list on error.
+        list of room dicts with keys: identifier, clients, persistent.
     """
     url = f"http://{host}:{port}/rooms"
     try:
         with urllib.request.urlopen(url, timeout=5) as response:
             data = json.loads(response.read().decode("utf-8"))
-            rooms = data.get("rooms", [])
-            return [r.get("identifier") for r in rooms if r.get("identifier")]
+            return [r for r in data.get("rooms", []) if r.get("identifier")]
     except (urllib.error.URLError, json.JSONDecodeError):
         return []
-
-
-def prompt_for_room(host: str, port: int) -> str:
-    """
-    Prompt user to select or enter a room name.
-
-    Arguments:
-        host: the server hostname.
-        port: the server port.
-
-    Returns:
-        the selected or entered room name.
-    """
-    rooms = fetch_rooms(host, port)
-
-    if rooms:
-        click.echo(f"Available rooms on {host}:{port}:")
-        for i, room in enumerate(rooms, 1):
-            click.echo(f"  {i}. {room}")
-        click.echo()
-
-        choice = click.prompt(
-            "Enter room number or new room name",
-            default=rooms[0] if rooms else None,
-        )
-
-        # Check if user entered a number
-        try:
-            idx = int(choice)
-            if 1 <= idx <= len(rooms):
-                return rooms[idx - 1]
-        except ValueError:
-            pass
-
-        return choice
-    else:
-        click.echo(f"Could not connect to {host}:{port} to list rooms.")
-        click.echo("Specify --host and --port if using a different server.")
-        click.echo()
-        return click.prompt("Enter room name")
 
 
 @click.command(name=APP_NAME)
@@ -105,12 +64,6 @@ def cli(
     _log = import_("elva.log")
     app = import_("elva.apps.editor.app")
 
-    # Prompt for room if not specified
-    if not config.get("identifier"):
-        host = config.get("host", DEFAULT_HOST)
-        port = config.get("port", DEFAULT_PORT)
-        config["identifier"] = prompt_for_room(host, port)
-
     # logging
     _log.LOGGER_NAME.set(__package__)
     log = logging.getLogger(__package__)
@@ -125,9 +78,18 @@ def cli(
         level = logging.getLevelNamesMapping()[level_name]
         log.setLevel(level)
 
-    # run app
-    ui = app.UI(config)
-    ui.run()
+    # run app, loop on room selection
+    while True:
+        ui = app.UI(config)
+        ui.run()
+
+        # check if the app exited with a room selection
+        room_id = ui.return_value
+        if room_id is not None and isinstance(room_id, str):
+            config["identifier"] = room_id
+            continue
+
+        break
 
     # reflect the app's return code
     ctx = click.get_current_context()
