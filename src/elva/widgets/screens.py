@@ -45,7 +45,7 @@ class InputScreen(ModalScreen):
         """
         Hook adding child widgets.
         """
-        yield Input()
+        yield Input(placeholder="Filename to save to")
 
     def on_input_submitted(self, event: Message):
         """

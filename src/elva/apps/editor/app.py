@@ -53,8 +53,8 @@ class UI(App):
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit"),
         Binding("ctrl+b", "toggle_dashboard", "Dashboard"),
-        Binding("ctrl+s", "save", "Save"),
-        Binding("ctrl+r", "render", "Render"),
+        Binding("ctrl+s", "render", "Save Document"),
+        Binding("ctrl+shift+s", "save", "Save Yjs", key_display="^S"),
     ]
     """Key bindings for actions of the app."""
 
