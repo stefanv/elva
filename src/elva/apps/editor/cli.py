@@ -10,7 +10,6 @@ from importlib import import_module as import_
 import click
 
 from elva.cli import common_options, file_paths_option_and_argument, pass_config_for
-from elva.core import DEFAULT_HOST, DEFAULT_PORT
 
 APP_NAME = "editor"
 """The name of the app."""
